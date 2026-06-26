@@ -9,6 +9,7 @@ while opcao != 0:
     print("4- Cancelar Agendamento")
     print("5- Ver Clientes")
     print("0- Sair do Sistema")
+    print("\n============================================")
 
     opcao = int(input("Digite a opção desejada: "))
 
