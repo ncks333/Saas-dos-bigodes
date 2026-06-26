@@ -1,3 +1,5 @@
+horarios = [ "07:00", "08:00", "09:00", "10:00", "11:00", "14:00", "15:00", "16:00", "17:00"]
+agendamentos = []
 clientes = []
 opcao = -1
 while opcao != 0:
@@ -24,7 +26,34 @@ while opcao != 0:
         clientes.append(cliente)
         print("Cliente cadastrado com sucesso!")
     elif opcao == 2:
-        print("Agendando horário.")
+        if len(clientes) == 0:
+            print("Nenhum cliente cadastrado. Cadastre um primeiro.")
+        else:
+        
+            
+            print("Horários disponiveis.")
+            for horario in horarios:
+                ocupado = False
+                for agendamento in agendamentos:
+                    if horario == agendamento["horario"]:
+                        ocupado = True
+                if not ocupado:
+                    print(horario)
+            nome_cliente = input("Digite o nome do cliente: ")
+            horario_escolhido = input("Digite o horário escolhido: ")
+            horario_ocupado = False
+            for agendamento in agendamentos:
+                if horario_escolhido == agendamento["horario"]:
+                    horario_ocupado = True
+            if horario_ocupado:
+                print("Horário ocupado. Selecione outro.")
+            else:
+                agendamento = {
+                    "cliente": nome_cliente,
+                    "horario": horario_escolhido
+                } 
+                agendamentos.append(agendamento)
+                
     elif opcao == 3:
         print("Vendo agenda.")
     elif opcao == 4:
