@@ -1,4 +1,3 @@
-from datetime import date
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
 from django.utils.decorators import method_decorator
@@ -75,8 +74,10 @@ class AppointmentViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
         summary = qs.aggregate(
             total=Count("id"), confirmed=Count("id", filter=Q(status=Appointment.Status.CONFIRMED)),
             pending=Count("id", filter=Q(status=Appointment.Status.PENDING)),
+            awaiting=Count("id", filter=Q(status=Appointment.Status.AWAITING)),
             cancelled=Count("id", filter=Q(status=Appointment.Status.CANCELLED)),
             completed=Count("id", filter=Q(status=Appointment.Status.COMPLETED)),
+            no_show=Count("id", filter=Q(status=Appointment.Status.NO_SHOW)),
             revenue=Sum("service__price", filter=Q(status=Appointment.Status.COMPLETED)),
         )
         summary["revenue"] = summary["revenue"] or 0
