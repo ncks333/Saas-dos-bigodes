@@ -1,0 +1,9 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body { @apply m-0 min-h-screen bg-ink font-sans text-zinc-100 antialiased; }
+input, select, textarea { @apply w-full rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 outline-none transition focus:border-gold; }
+button { @apply rounded-xl px-5 py-3 font-semibold transition disabled:cursor-not-allowed disabled:opacity-50; }
+.card { @apply rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5; }
