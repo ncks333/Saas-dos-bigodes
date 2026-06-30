@@ -39,6 +39,10 @@ h1, h2, h3, p { margin-top: 0; }
 .login-card > p { color: #8f9089; }
 .login-card form { display: grid; gap: 18px; margin-top: 30px; }
 .login-card .btn { margin-top: 5px; }
+.company-credit { margin: 26px 0 0; color: #74756e !important; font-size: 11px !important; letter-spacing: .04em; }
+.company-credit strong { color: #b7a15f; font-weight: 700; }
+.login-credit, .public-credit { text-align: center; }
+.login-credit { margin-top: 24px; }
 
 .app-shell { min-height: 100vh; }
 .sidebar { position: fixed; inset: 0 auto 0 0; width: 250px; display: flex; flex-direction: column; padding: 22px 14px; background: #131411; border-right: 1px solid #292a26; z-index: 20; }
@@ -179,6 +183,8 @@ td small { color: #777871; margin-top: 3px; }
 .success-icon { width: 65px; height: 65px; margin: 0 auto 20px; display: grid; place-items: center; border-radius: 50%; background: #c7a85b; color: #151510; }
 .success-card h1 { font: 700 32px "Playfair Display"; }
 .success-card > p:not(.eyebrow) { color: #92938c; max-width: 430px; margin: 0 auto 25px; }
+.success-card .public-credit { margin-top: 28px !important; margin-bottom: 0 !important; }
+.public-credit { margin-top: 18px; }
 
 @media (max-width: 1050px) { .stats { grid-template-columns: 1fr 1fr; }.cards-grid { grid-template-columns: 1fr 1fr; }.agenda-list article { grid-template-columns: 65px 1fr auto; }.agenda-list select { grid-column: 2; }.agenda-list .badge { display: none; }.settings-grid { grid-template-columns: 1fr; } }
 @media (max-width: 760px) {

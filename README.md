@@ -1,6 +1,6 @@
 # SaaS dos Bigodes
 
-Plataforma multi-tenant de agendamento para barbearias, com Django REST Framework, React, PostgreSQL, Redis e Celery.
+Plataforma multi-tenant de agendamento para barbearias, desenvolvida pela **M&R Solutions**, com Django REST Framework, React, PostgreSQL, Redis e Celery.
 
 ## O que já está disponível
 
