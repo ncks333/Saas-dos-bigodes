@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from hashlib import sha256
 import secrets
 from zoneinfo import ZoneInfo
@@ -20,6 +20,23 @@ def _lock_tenant_schedule(barbershop_id: int) -> None:
     if connection.vendor == "postgresql":
         with connection.cursor() as cursor:
             cursor.execute("SELECT pg_advisory_xact_lock(%s)", [barbershop_id])
+
+
+def _day_bounds(barbershop, day: date) -> tuple[datetime, datetime]:
+    tz = ZoneInfo(barbershop.timezone)
+    start = datetime.combine(day, time.min, tzinfo=tz)
+    return start, start + timedelta(days=1)
+
+
+def active_appointments_for_day(*, barbershop, customer_id: int, day: date):
+    day_start, day_end = _day_bounds(barbershop, day)
+    return Appointment.objects.filter(
+        barbershop=barbershop,
+        customer_id=customer_id,
+        status__in=ACTIVE_STATUSES,
+        starts_at__gte=day_start,
+        starts_at__lt=day_end,
+    ).order_by("starts_at")
 
 
 def _assert_slot(barbershop, starts_at: datetime, ends_at: datetime, *, appointment_id=None) -> None:
@@ -50,8 +67,16 @@ def create_appointment(*, barbershop, customer_id: int, service_id: int, starts_
     employee = data.get("employee")
     if employee and employee.barbershop_id != barbershop.id:
         raise ValidationError("Funcionário inválido para esta barbearia.")
-    if Appointment.objects.select_for_update().filter(customer=customer, status__in=ACTIVE_STATUSES).exists():
-        raise ValidationError("O cliente já possui um agendamento ativo.")
+    appointment_day = starts_at.astimezone(ZoneInfo(barbershop.timezone)).date()
+    if active_appointments_for_day(
+        barbershop=barbershop,
+        customer_id=customer.id,
+        day=appointment_day,
+    ).select_for_update().exists():
+        raise ValidationError(
+            "Usuário já possui reserva ativa nesta data. "
+            "Cancele a reserva existente antes de criar uma nova."
+        )
     ends_at = starts_at + timedelta(minutes=service.duration_minutes)
     _assert_slot(barbershop, starts_at, ends_at)
     raw_token = secrets.token_urlsafe(32)
@@ -78,8 +103,16 @@ def update_appointment(*, appointment: Appointment, validated_data: dict) -> App
     ends_at = starts_at + timedelta(minutes=service.duration_minutes)
     schedule_changed = any(field in validated_data for field in ("customer", "service", "employee", "starts_at"))
     if schedule_changed:
-        if Appointment.objects.select_for_update().filter(customer=customer, status__in=ACTIVE_STATUSES).exclude(pk=appointment.pk).exists():
-            raise ValidationError("O cliente já possui um agendamento ativo.")
+        appointment_day = starts_at.astimezone(ZoneInfo(appointment.barbershop.timezone)).date()
+        if active_appointments_for_day(
+            barbershop=appointment.barbershop,
+            customer_id=customer.id,
+            day=appointment_day,
+        ).select_for_update().exclude(pk=appointment.pk).exists():
+            raise ValidationError(
+                "Usuário já possui reserva ativa nesta data. "
+                "Cancele a reserva existente antes de criar uma nova."
+            )
         _assert_slot(appointment.barbershop, starts_at, ends_at, appointment_id=appointment.pk)
     for field in ("notes", "status"):
         if field in validated_data:
@@ -96,6 +129,17 @@ def cancel_with_token(raw_token: str) -> Appointment:
     appointment = Appointment.objects.select_for_update().filter(cancellation_token_hash=token_hash).first()
     if not appointment or appointment.status not in ACTIVE_STATUSES or not appointment.cancellation_token_expires_at or appointment.cancellation_token_expires_at <= timezone.now():
         raise ValidationError("Token inválido ou expirado.")
+    appointment.status = Appointment.Status.CANCELLED
+    appointment.cancellation_token_hash = ""
+    appointment.save(update_fields=["status", "cancellation_token_hash", "updated_at"])
+    return appointment
+
+
+@transaction.atomic
+def cancel_appointment(*, appointment: Appointment) -> Appointment:
+    appointment = Appointment.objects.select_for_update().get(pk=appointment.pk)
+    if appointment.status not in ACTIVE_STATUSES:
+        raise ValidationError("Esta reserva não está ativa e não pode ser cancelada.")
     appointment.status = Appointment.Status.CANCELLED
     appointment.cancellation_token_hash = ""
     appointment.save(update_fields=["status", "cancellation_token_hash", "updated_at"])

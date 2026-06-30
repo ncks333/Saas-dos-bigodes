@@ -5,6 +5,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from apps.accounts.views import ChangePasswordView, LoginView, LogoutAllView, LogoutView, PasswordResetConfirmView, PasswordResetRequestView, UserViewSet
 from apps.appointments.views import AppointmentViewSet, AvailabilityView, PublicBookingView, PublicCancellationView, ScheduleBlockViewSet
+from apps.appointments.agent_views import AgentToolViewSet
 from apps.barbershops.views import CurrentBarbershopView, OperatingHourViewSet, PublicBarbershopView
 from apps.customers.views import CustomerViewSet
 from apps.reports.views import DashboardView
@@ -17,6 +18,7 @@ router.register("appointments", AppointmentViewSet, basename="appointment")
 router.register("schedule-blocks", ScheduleBlockViewSet, basename="schedule-block")
 router.register("operating-hours", OperatingHourViewSet, basename="operating-hour")
 router.register("users", UserViewSet, basename="user")
+router.register("agent-tools", AgentToolViewSet, basename="agent-tool")
 
 urlpatterns = [
     path("admin/", admin.site.urls),

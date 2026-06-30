@@ -42,18 +42,30 @@ async function fetchAll<T>(path: string, params?: Record<string, unknown>): Prom
 const dateTimeLocal = (value: string) => value ? format(new Date(value), "yyyy-MM-dd'T'HH:mm") : "";
 const toIso = (value: string) => new Date(value).toISOString();
 const money = (value: string | number) => Number(value).toLocaleString("pt-BR", {style: "currency", currency: "BRL"});
+const findErrorMessage = (value: unknown): string | null => {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const message = findErrorMessage(item);
+      if (message) return message;
+    }
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    for (const key of ["details", "detail", "message", "msg", "error"]) {
+      const message = findErrorMessage(record[key]);
+      if (message) return message;
+    }
+    for (const item of Object.values(record)) {
+      const message = findErrorMessage(item);
+      if (message) return message;
+    }
+  }
+  return null;
+};
 const errorText = (error: unknown) => {
   if (!axios.isAxiosError(error)) return "Não foi possível concluir a operação.";
-  const data = error.response?.data;
-  if (typeof data === "string") return data;
-  if (data?.detail) return data.detail;
-  if (data?.message) return data.message;
-  if (data && typeof data === "object") {
-    const first = Object.values(data).flat()[0];
-    if (typeof first === "string") return first;
-    if (typeof first === "object" && first && "msg" in first) return String(first.msg);
-  }
-  return "Revise os dados e tente novamente.";
+  return findErrorMessage(error.response?.data) ?? "Revise os dados e tente novamente.";
 };
 
 function Button({children, variant = "primary", ...props}: React.ButtonHTMLAttributes<HTMLButtonElement> & {variant?: "primary" | "secondary" | "danger" | "ghost"}) {
@@ -150,7 +162,7 @@ function UsersPage() {
   return <><PageHeader title="Equipe" description="Gerencie o acesso dos profissionais ao sistema." action={<Button onClick={() => setEditing({username: "", email: "", first_name: "", last_name: "", role: "FUNCIONARIO", is_active: true, password: ""})}><Plus/> Novo usuário</Button>}/>{query.isLoading ? <Loading/> : <div className="cards-grid">{listOf(query.data).map(u => <article className="person-card" key={u.id}><div className="avatar large">{(u.first_name || u.username)[0].toUpperCase()}</div><div><h3>{`${u.first_name} ${u.last_name}`.trim() || u.username}</h3><p>@{u.username} · {u.email}</p><span className={u.is_active ? "active-dot" : "inactive-dot"}>{u.role === "ADMIN" ? "Administrador" : "Funcionário"}</span></div><button onClick={() => setEditing(u)}>Editar</button></article>)}</div>}{editing && <UserForm value={editing} save={save} close={() => setEditing(null)}/>}</>;
 }
 function UserForm({value, save, close}: {value: Partial<Employee> & {password?: string}; save: ReturnType<typeof useMutation<unknown, Error, Partial<Employee> & {password?: string}>>; close: () => void}) {
-  const [d, setD] = useState(value); return <Modal title={d.id ? "Editar usuário" : "Novo usuário"} onClose={close}><form className="form-grid" onSubmit={e => {e.preventDefault(); save.mutate(d);}}><label>Nome<input value={d.first_name ?? ""} onChange={e => setD({...d, first_name: e.target.value})}/></label><label>Sobrenome<input value={d.last_name ?? ""} onChange={e => setD({...d, last_name: e.target.value})}/></label><label>Usuário<input required value={d.username ?? ""} onChange={e => setD({...d, username: e.target.value})}/></label><label>E-mail<input required type="email" value={d.email ?? ""} onChange={e => setD({...d, email: e.target.value})}/></label><label>Perfil<select value={d.role ?? "FUNCIONARIO"} onChange={e => setD({...d, role: e.target.value as Role})}><option value="FUNCIONARIO">Funcionário</option><option value="ADMIN">Administrador</option></select></label><label>{d.id ? "Nova senha (opcional)" : "Senha"}<input required={!d.id} type="password" value={d.password ?? ""} onChange={e => setD({...d, password: e.target.value})}/></label><Toggle checked={d.is_active ?? true} setChecked={is_active => setD({...d, is_active})}>Acesso ativo</Toggle><ErrorMessage error={save.error}/><div className="form-actions full"><Button type="button" variant="secondary" onClick={close}>Cancelar</Button><Button disabled={save.isPending}><Save/> Salvar</Button></div></form></Modal>;
+  const [d, setD] = useState(value); return <Modal title={d.id ? "Editar usuário" : "Novo usuário"} onClose={close}><form className="form-grid" onSubmit={e => {e.preventDefault(); save.mutate(d);}}><label>Nome<input value={d.first_name ?? ""} onChange={e => setD({...d, first_name: e.target.value})}/></label><label>Sobrenome<input value={d.last_name ?? ""} onChange={e => setD({...d, last_name: e.target.value})}/></label><label>Usuário<input required value={d.username ?? ""} onChange={e => setD({...d, username: e.target.value})}/></label><label>E-mail<input required type="email" value={d.email ?? ""} onChange={e => setD({...d, email: e.target.value})}/></label><label>Perfil<select value={d.role ?? "FUNCIONARIO"} onChange={e => setD({...d, role: e.target.value as Role})}><option value="FUNCIONARIO">Funcionário</option><option value="ADMIN">Administrador</option></select></label><label>{d.id ? "Nova senha (opcional)" : "Senha"}<input required={!d.id} minLength={d.id ? undefined : 8} pattern={d.password ? "(?=.*[a-z])(?=.*[A-Z])(?=.*\\d).{8,}" : undefined} title="Use ao menos 8 caracteres, com letra maiúscula, minúscula e número." type="password" value={d.password ?? ""} onChange={e => setD({...d, password: e.target.value})}/><small>8+ caracteres, com maiúscula, minúscula e número.</small></label><Toggle checked={d.is_active ?? true} setChecked={is_active => setD({...d, is_active})}>Acesso ativo</Toggle><ErrorMessage error={save.error}/><div className="form-actions full"><Button type="button" variant="secondary" onClick={close}>Cancelar</Button><Button disabled={save.isPending}><Save/> Salvar</Button></div></form></Modal>;
 }
 
 function BlocksPage() {

@@ -14,6 +14,7 @@ Plataforma multi-tenant de agendamento para barbearias, com Django REST Framewor
 - Fluxo público, Turnstile, cancelamento por token com hash e rate limiting.
 - Resumo diário e dashboard com faturamento, cancelamentos, recorrência e horários populares.
 - Confirmações e lembretes assíncronos de 24h/1h por Celery, com retries.
+- Ferramentas para agente de IA com regra transacional de uma reserva ativa por cliente/dia.
 - Painel React responsivo e fluxo público mobile-first.
 - Testes iniciais de autenticação, agendamento e isolamento multi-tenant.
 
@@ -57,6 +58,8 @@ frontend/
 docs/ SECURITY.md DEPLOY.md
 docker-compose.yml
 ```
+
+Consulte também [Agente de agendamento](docs/AGENT.md) para o prompt, as ferramentas e o fluxo seguro de cancelamento.
 
 ## Produção
 
