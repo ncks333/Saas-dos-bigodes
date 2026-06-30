@@ -1,6 +1,5 @@
 from rest_framework import generics, viewsets
 from rest_framework.permissions import AllowAny
-from apps.barbershops.models import Barbershop
 from core.utils.viewsets import TenantViewSetMixin
 from .models import Service
 from .serializers import ServiceSerializer

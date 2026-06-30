@@ -92,6 +92,10 @@ celerybeat.pid
 
 # Environments and secrets
 .env
+
+# Playwright
+frontend/test-results/
+frontend/playwright-report/
 .venv/
 .tools/
 env/
