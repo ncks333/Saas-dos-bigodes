@@ -13,6 +13,7 @@ from apps.services.models import Service
 from .models import Appointment, ScheduleBlock
 
 ACTIVE_STATUSES = [Appointment.Status.PENDING, Appointment.Status.CONFIRMED, Appointment.Status.AWAITING]
+SLOT_INTERVAL_MINUTES = 30
 
 
 def _lock_tenant_schedule(barbershop_id: int) -> None:
@@ -160,5 +161,5 @@ def available_slots(*, barbershop, day, service: Service) -> list[datetime]:
         blocked = ScheduleBlock.objects.filter(barbershop=barbershop, starts_at__lt=end, ends_at__gt=cursor).exists()
         if cursor > timezone.now() and not busy and not blocked:
             slots.append(cursor)
-        cursor += timedelta(minutes=15)
+        cursor += timedelta(minutes=SLOT_INTERVAL_MINUTES)
     return slots

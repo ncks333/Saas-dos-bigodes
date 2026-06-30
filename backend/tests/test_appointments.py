@@ -5,7 +5,7 @@ import pytest
 from rest_framework.exceptions import ValidationError
 
 from apps.appointments.models import Appointment
-from apps.appointments.services import cancel_appointment, create_appointment
+from apps.appointments.services import available_slots, cancel_appointment, create_appointment
 from apps.customers.models import Customer
 from apps.services.models import Service
 
@@ -101,3 +101,16 @@ def test_agent_tool_refuses_cancellation_without_explicit_confirmation(api_clien
 
     assert response.status_code == 400
     assert "confirmação explícita" in str(response.data)
+
+
+@pytest.mark.django_db
+def test_available_slots_use_thirty_minute_intervals(barbershop):
+    service = Service.objects.create(
+        barbershop=barbershop, name="Corte", price=50, duration_minutes=30
+    )
+    day = (datetime.now(ZoneInfo(barbershop.timezone)) + timedelta(days=7)).date()
+
+    slots = available_slots(barbershop=barbershop, day=day, service=service)
+
+    assert len(slots) > 1
+    assert all(current - previous == timedelta(minutes=30) for previous, current in zip(slots, slots[1:]))
