@@ -1,6 +1,6 @@
-# SaaS dos Bigodes
+# M&R BarberHub
 
-Plataforma multi-tenant de agendamento para barbearias, desenvolvida pela **M&R Solutions**, com Django REST Framework, React, PostgreSQL, Redis e Celery.
+Plataforma multi-tenant de gestão e agendamento para barbearias, desenvolvida pela **M&R Solutions**, com Django REST Framework, React, PostgreSQL, Redis e Celery.
 
 ## O que já está disponível
 
@@ -34,17 +34,19 @@ Sem Docker, instale Python 3.13, PostgreSQL, Redis e Node 22; depois instale `ba
 
 ## Testes e qualidade
 
-```powershell
+```bash
 docker compose run --rm backend pytest
 docker compose run --rm backend ruff check .
-docker compose run --rm frontend npm run build
+cd frontend
+VITE_API_URL=http://localhost:8000/api/v1 npm run build
+npm run test:e2e
 ```
 
 O limite de cobertura está configurado em 80%. A suíte incluída estabelece a fundação, mas novos fluxos precisam manter esse patamar.
 
 ## Variáveis importantes
 
-Copie `.env.example`; nunca versione `.env`. Produção exige chaves independentes para Django e JWT, credenciais fortes, origens CORS/CSRF exatas, Turnstile e provedor de WhatsApp. O adaptador atual usa um endpoint compatível com Evolution API e deve ser ajustado à versão contratada.
+Copie `.env.example`; nunca versione `.env`. Produção exige chaves independentes para Django e JWT, credenciais fortes, origens CORS/CSRF exatas, Turnstile, SMTP transacional e Evolution API v2 com uma instância configurada.
 
 ## Estrutura
 
@@ -63,6 +65,6 @@ Consulte também [Agente de agendamento](docs/AGENT.md) para o prompt, as ferram
 
 ## Produção
 
-O Compose é voltado a desenvolvimento/homologação. As migrations iniciais estão versionadas; valide mudanças com `python manage.py makemigrations --check --dry-run`. Consulte [segurança](docs/SECURITY.md) e [deploy](docs/DEPLOY.md). Integração real de WhatsApp, e-mail transacional, observabilidade e testes E2E são gates obrigatórios antes de receber clientes pagantes.
+O Compose é voltado a desenvolvimento/homologação. A produção está preparada para Vercel, Railway, Supabase e Upstash. Siga o [guia completo de deploy](docs/DEPLOY.md) e a [lista de controles de segurança](docs/SECURITY.md). Credenciais reais, domínio, WhatsApp e SMTP ainda precisam ser cadastrados nos respectivos painéis antes da liberação.
 
 O antigo `main.py` foi preservado como protótipo didático; a aplicação comercial está em `backend/` e `frontend/`.

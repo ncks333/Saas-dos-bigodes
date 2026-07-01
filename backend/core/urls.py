@@ -10,6 +10,7 @@ from apps.barbershops.views import CurrentBarbershopView, OperatingHourViewSet, 
 from apps.customers.views import CustomerViewSet
 from apps.reports.views import DashboardView
 from apps.services.views import PublicServiceListView, ServiceViewSet
+from core.health import HealthCheckView
 
 router = DefaultRouter()
 router.register("customers", CustomerViewSet, basename="customer")
@@ -22,6 +23,7 @@ router.register("agent-tools", AgentToolViewSet, basename="agent-tool")
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("api/v1/health/", HealthCheckView.as_view()),
     path("api/v1/", include(router.urls)),
     path("api/v1/auth/login/", LoginView.as_view()),
     path("api/v1/auth/refresh/", TokenRefreshView.as_view()),

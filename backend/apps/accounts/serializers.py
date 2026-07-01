@@ -55,5 +55,6 @@ class UserSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         password = validated_data.pop("password", None)
         if not password:
-            raise serializers.ValidationError({"password": "Campo obrigatório."})
+            message = "Campo obrigatório."
+            raise serializers.ValidationError({"password": message})
         return User.objects.create_user(password=password, **validated_data)

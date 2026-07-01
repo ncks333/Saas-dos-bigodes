@@ -131,7 +131,7 @@ def cancel_with_token(raw_token: str) -> Appointment:
     if not appointment or appointment.status not in ACTIVE_STATUSES or not appointment.cancellation_token_expires_at or appointment.cancellation_token_expires_at <= timezone.now():
         raise ValidationError("Token inválido ou expirado.")
     appointment.status = Appointment.Status.CANCELLED
-    appointment.cancellation_token_hash = ""
+    appointment.cancellation_token_hash = str()
     appointment.save(update_fields=["status", "cancellation_token_hash", "updated_at"])
     return appointment
 
@@ -142,7 +142,7 @@ def cancel_appointment(*, appointment: Appointment) -> Appointment:
     if appointment.status not in ACTIVE_STATUSES:
         raise ValidationError("Esta reserva não está ativa e não pode ser cancelada.")
     appointment.status = Appointment.Status.CANCELLED
-    appointment.cancellation_token_hash = ""
+    appointment.cancellation_token_hash = str()
     appointment.save(update_fields=["status", "cancellation_token_hash", "updated_at"])
     return appointment
 

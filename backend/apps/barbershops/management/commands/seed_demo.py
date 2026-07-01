@@ -11,7 +11,10 @@ class Command(BaseCommand):
     help = "Cria uma barbearia e um administrador de demonstração"
 
     def handle(self, *args, **options):
-        shop, _ = Barbershop.objects.get_or_create(slug="bigodes", defaults={"name": "SaaS dos Bigodes"})
+        shop, _ = Barbershop.objects.get_or_create(slug="bigodes", defaults={"name": "Barbearia Bigodes"})
+        if shop.name == "SaaS dos Bigodes":
+            shop.name = "Barbearia Bigodes"
+            shop.save(update_fields=["name", "updated_at"])
         for weekday in range(6):
             OperatingHour.objects.get_or_create(barbershop=shop, weekday=weekday, defaults={"opens_at": time(8), "closes_at": time(18)})
         for name, price, duration in [("Corte", "50", 30), ("Barba", "35", 30), ("Corte + Barba", "80", 60)]:
