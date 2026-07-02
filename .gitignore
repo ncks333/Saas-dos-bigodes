@@ -123,3 +123,5 @@ frontend/dist/
 
 # Documentation builds
 /site
+.vercel/
+.env.local
