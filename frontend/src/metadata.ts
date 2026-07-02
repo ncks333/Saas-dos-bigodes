@@ -1,0 +1,15 @@
+import {useEffect} from "react";
+
+export function usePageMetadata(title: string, description: string, path: string) {
+  useEffect(() => {
+    document.title = title;
+    const descriptionMeta = document.querySelector<HTMLMetaElement>('meta[name="description"]');
+    const ogTitle = document.querySelector<HTMLMetaElement>('meta[property="og:title"]');
+    const ogDescription = document.querySelector<HTMLMetaElement>('meta[property="og:description"]');
+    const ogUrl = document.querySelector<HTMLMetaElement>('meta[property="og:url"]');
+    descriptionMeta?.setAttribute("content", description);
+    ogTitle?.setAttribute("content", title);
+    ogDescription?.setAttribute("content", description);
+    ogUrl?.setAttribute("content", `https://mr-barberhub.vercel.app${path}`);
+  }, [description, path, title]);
+}

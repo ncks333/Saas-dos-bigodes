@@ -27,6 +27,7 @@ class Appointment(TenantModel):
     source = models.CharField(max_length=10, choices=Source.choices, default=Source.MANUAL)
     cancellation_token_hash = models.CharField(max_length=64, blank=True, db_index=True)
     cancellation_token_expires_at = models.DateTimeField(null=True, blank=True)
+    privacy_notice_accepted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["starts_at"]

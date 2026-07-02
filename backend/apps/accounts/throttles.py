@@ -6,3 +6,7 @@ class LoginRateThrottle(AnonRateThrottle):
 
     def parse_rate(self, rate):
         return 5, 15 * 60
+
+
+class PasswordResetRateThrottle(AnonRateThrottle):
+    scope = "password_reset"

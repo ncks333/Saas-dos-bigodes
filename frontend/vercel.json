@@ -4,7 +4,12 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "rewrites": [
-    {"source": "/agendar/(.*)", "destination": "/index.html"}
+    {"source": "/favicon.ico", "destination": "/favicon.svg"},
+    {"source": "/agendar/(.*)", "destination": "/index.html"},
+    {"source": "/login", "destination": "/index.html"},
+    {"source": "/privacidade", "destination": "/index.html"},
+    {"source": "/recuperar-senha", "destination": "/index.html"},
+    {"source": "/redefinir-senha", "destination": "/index.html"}
   ],
   "headers": [
     {
@@ -14,13 +19,36 @@
         {"key": "X-Frame-Options", "value": "DENY"},
         {"key": "Referrer-Policy", "value": "strict-origin-when-cross-origin"},
         {"key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()"},
-        {"key": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains"}
+        {"key": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains"},
+        {"key": "Content-Security-Policy", "value": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https://*.posthog.com; connect-src 'self' https://saas-dos-bigodes-production.up.railway.app https://challenges.cloudflare.com https://*.posthog.com; frame-src https://challenges.cloudflare.com; worker-src 'self' blob:; manifest-src 'self'; upgrade-insecure-requests"}
       ]
     },
     {
       "source": "/assets/(.*)",
       "headers": [
         {"key": "Cache-Control", "value": "public, max-age=31536000, immutable"}
+      ]
+    },
+    {
+      "source": "/redefinir-senha",
+      "headers": [
+        {"key": "Cache-Control", "value": "private, no-store"},
+        {"key": "Referrer-Policy", "value": "no-referrer"},
+        {"key": "X-Robots-Tag", "value": "noindex, nofollow"}
+      ]
+    },
+    {
+      "source": "/login",
+      "headers": [
+        {"key": "Cache-Control", "value": "private, no-store"},
+        {"key": "X-Robots-Tag", "value": "noindex, nofollow"}
+      ]
+    },
+    {
+      "source": "/recuperar-senha",
+      "headers": [
+        {"key": "Cache-Control", "value": "private, no-store"},
+        {"key": "X-Robots-Tag", "value": "noindex, nofollow"}
       ]
     }
   ]

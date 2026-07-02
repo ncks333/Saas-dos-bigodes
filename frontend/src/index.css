@@ -39,6 +39,9 @@ h1, h2, h3, p { margin-top: 0; }
 .login-card > p { color: #8f9089; }
 .login-card form { display: grid; gap: 18px; margin-top: 30px; }
 .login-card .btn { margin-top: 5px; }
+.back-link, .forgot-link { color: #a99a6e; font-size: 12px; }
+.back-link { display: inline-block; margin-bottom: 22px; }
+.forgot-link { justify-self: end; margin-top: -8px; }
 .company-credit { margin: 26px 0 0; color: #74756e !important; font-size: 11px !important; letter-spacing: .04em; }
 .company-credit strong { color: #b7a15f; font-weight: 700; }
 .login-credit, .public-credit { text-align: center; }
@@ -178,13 +181,27 @@ td small { color: #777871; margin-top: 3px; }
 .slots { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 14px; }
 .slots button { border: 1px solid #363732; background: #20211e; padding: 10px 5px; border-radius: 9px; }
 .slots p { grid-column: 1/-1; color: #777; }
+.slot-error { grid-column: 1/-1; display: grid; gap: 10px; justify-items: start; }
+.slots .slot-error p.form-error { color: #ef8e88; }
+.slot-error .btn { width: auto; }
 .booking-submit { width: 100%; margin-top: 22px; }
+.privacy-check { grid-template-columns: auto 1fr; align-items: start; gap: 10px; margin-top: 20px; color: #92938c; font-weight: 400; line-height: 1.5; }
+.privacy-check input { width: 17px; height: 17px; margin-top: 1px; accent-color: #c7a85b; }
+.privacy-check a { color: #dec370; }
 .success-card { margin-top: 18vh; text-align: center; }
 .success-icon { width: 65px; height: 65px; margin: 0 auto 20px; display: grid; place-items: center; border-radius: 50%; background: #c7a85b; color: #151510; }
+.success-icon.error-icon { background: #8d2d2d; color: #fff; }
+.public-state .loading { min-height: 65px; }
 .success-card h1 { font: 700 32px "Playfair Display"; }
 .success-card > p:not(.eyebrow) { color: #92938c; max-width: 430px; margin: 0 auto 25px; }
 .success-card .public-credit { margin-top: 28px !important; margin-bottom: 0 !important; }
 .public-credit { margin-top: 18px; }
+.route-loading { min-height: 100vh; display: flex; align-items: center; justify-content: center; gap: 6px; background: #0d0e0e; }
+.route-loading span { width: 8px; height: 8px; border-radius: 50%; background: #c7a85b; animation: pulse .8s infinite alternate; }
+.route-loading span:nth-child(2) { animation-delay: .2s; }.route-loading span:nth-child(3) { animation-delay: .4s; }
+.not-found { min-height: 100vh; display: grid; place-items: center; align-content: center; gap: 18px; padding: 20px; text-align: center; }
+.not-found h1 { margin: 0; font: 700 clamp(38px, 7vw, 64px) "Playfair Display", serif; }
+.not-found .btn { text-decoration: none; }
 
 @media (max-width: 1050px) { .stats { grid-template-columns: 1fr 1fr; }.cards-grid { grid-template-columns: 1fr 1fr; }.agenda-list article { grid-template-columns: 65px 1fr auto; }.agenda-list select { grid-column: 2; }.agenda-list .badge { display: none; }.settings-grid { grid-template-columns: 1fr; } }
 @media (max-width: 760px) {

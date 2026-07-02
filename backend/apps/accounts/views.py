@@ -1,3 +1,6 @@
+from urllib.parse import urlencode
+
+from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import send_mail
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
@@ -16,7 +19,7 @@ from apps.audit.services import record_event
 from core.permissions.roles import IsAdminRole
 from .models import User
 from .serializers import ChangePasswordSerializer, LoginSerializer, UserSerializer
-from .throttles import LoginRateThrottle
+from .throttles import LoginRateThrottle, PasswordResetRateThrottle
 
 
 @method_decorator(ratelimit(key="ip", rate="5/15m", method="POST", block=True), name="dispatch")
@@ -70,18 +73,27 @@ class ChangePasswordView(APIView):
 
 class PasswordResetRequestView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [PasswordResetRateThrottle]
 
     def post(self, request):
         user = User.objects.filter(email__iexact=request.data.get("email", ""), is_active=True).first()
         if user:
             uid = urlsafe_base64_encode(force_bytes(user.pk))
             token = default_token_generator.make_token(user)
-            send_mail("Recuperação de senha", f"Use o código {uid}/{token} para redefinir sua senha.", None, [user.email])
+            query = urlencode({"uid": uid, "token": token})
+            reset_url = f"{settings.FRONTEND_URL.rstrip('/')}/redefinir-senha?{query}"
+            send_mail(
+                "Recuperação de senha",
+                f"Use o link abaixo para redefinir sua senha. Ele expira em 1 hora.\n\n{reset_url}\n\nSe você não fez este pedido, ignore esta mensagem.",
+                None,
+                [user.email],
+            )
         return Response({"message": "Se o e-mail existir, as instruções serão enviadas."})
 
 
 class PasswordResetConfirmView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [PasswordResetRateThrottle]
 
     def post(self, request):
         try:

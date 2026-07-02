@@ -79,6 +79,7 @@ WHATSAPP_INSTANCE_NAME=barberhub
 ```
 
 Configure também SMTP transacional. O backend se recusa a iniciar em produção usando o backend de e-mail do console, pois tokens de recuperação de senha não podem aparecer em logs.
+Defina `FRONTEND_URL=https://app.seudominio.com` para os links de recuperação e mantenha `PASSWORD_RESET_TIMEOUT=3600` para expiração em uma hora.
 
 ## 6. Vercel
 

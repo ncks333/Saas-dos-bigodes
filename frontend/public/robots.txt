@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /login
+Disallow: /recuperar-senha
+Disallow: /redefinir-senha
+
+Sitemap: https://mr-barberhub.vercel.app/sitemap.xml

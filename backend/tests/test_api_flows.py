@@ -116,6 +116,19 @@ def test_public_booking_availability_and_cancellation(client, barbershop, monkey
     assert availability.status_code == 200
     assert start.isoformat() in availability.data["slots"]
 
+    rejected = client.post(
+        "/api/v1/public/bigodes/book/",
+        {
+            "name": "Cliente Público",
+            "whatsapp": "+55 (11) 97777-7777",
+            "service_id": service.id,
+            "starts_at": start.isoformat(),
+            "captcha_token": "development",
+        },
+        content_type="application/json",
+    )
+    assert rejected.status_code == 400
+
     booked = client.post(
         "/api/v1/public/bigodes/book/",
         {
@@ -124,11 +137,13 @@ def test_public_booking_availability_and_cancellation(client, barbershop, monkey
             "service_id": service.id,
             "starts_at": start.isoformat(),
             "captcha_token": "development",
+            "privacy_notice_accepted": True,
         },
         content_type="application/json",
     )
     assert booked.status_code == 201
     assert booked.data["status"] == Appointment.Status.AWAITING
+    assert Appointment.objects.get(pk=booked.data["id"]).privacy_notice_accepted_at is not None
     token = booked.data["cancellation_token"]
     cancelled = client.post("/api/v1/public/cancel/", {"token": token})
     assert cancelled.status_code == 200
@@ -158,6 +173,7 @@ def test_password_user_and_session_flows(api_client, client, user):
     reset = client.post("/api/v1/auth/password-reset/", {"email": user.email})
     assert reset.status_code == 200
     assert len(mail.outbox) == 1
+    assert "http://localhost:5173/redefinir-senha?" in mail.outbox[0].body
     uid = urlsafe_base64_encode(force_bytes(user.pk))
     token = default_token_generator.make_token(user)
     assert client.post(

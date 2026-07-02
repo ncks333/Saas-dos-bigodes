@@ -1,6 +1,8 @@
 import os
 from .base import *  # noqa: F403
 
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://mr-barberhub.vercel.app")
+
 if SECRET_KEY == INSECURE_DEFAULT_SECRET or SECRET_KEY.startswith("troque-") or len(SECRET_KEY) < 50:  # noqa: F405
     raise RuntimeError("DJANGO_SECRET_KEY deve ser configurada em produção")
 if not JWT_SIGNING_KEY or JWT_SIGNING_KEY == SECRET_KEY or len(JWT_SIGNING_KEY) < 50:  # noqa: F405
@@ -11,6 +13,8 @@ if not TURNSTILE_SECRET_KEY:  # noqa: F405
     raise RuntimeError("TURNSTILE_SECRET_KEY deve ser configurada em produção")
 if EMAIL_BACKEND == "django.core.mail.backends.console.EmailBackend":  # noqa: F405
     raise RuntimeError("Configure um EMAIL_BACKEND transacional em produção")
+if not FRONTEND_URL.startswith("https://"):  # noqa: F405
+    raise RuntimeError("FRONTEND_URL deve usar HTTPS em produção")
 if not all((WHATSAPP_BASE_URL, WHATSAPP_API_KEY, WHATSAPP_INSTANCE_NAME)):  # noqa: F405
     raise RuntimeError("Configure URL, chave e instância do provedor de WhatsApp")
 

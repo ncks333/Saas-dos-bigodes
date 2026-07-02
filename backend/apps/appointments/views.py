@@ -128,10 +128,17 @@ class PublicBookingView(APIView):
             barbershop=barbershop, customer_id=customer.id, service_id=payload.service_id,
             starts_at=payload.starts_at,
             source=Appointment.Source.ONLINE, status=Appointment.Status.AWAITING,
+            privacy_notice_accepted_at=timezone.now(),
         )
         send_appointment_confirmation.delay(appointment.id)
         from apps.audit.services import record_system_event
-        record_system_event(barbershop.id, "PUBLIC_APPOINTMENT_CREATED", target=appointment, request=request)
+        record_system_event(
+            barbershop.id,
+            "PUBLIC_APPOINTMENT_CREATED",
+            target=appointment,
+            request=request,
+            metadata={"privacy_notice_version": "2026-07-02"},
+        )
         return Response({"id": appointment.id, "status": appointment.status, "cancellation_token": token}, status=status.HTTP_201_CREATED)
 
 
