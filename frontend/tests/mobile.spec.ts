@@ -55,13 +55,17 @@ test("agendamento público funciona no celular", async ({page}) => {
     }
   });
   await page.goto("/agendar/bigodes");
+  await expect(page.getByRole("button", {name: "Escolher data"})).toBeVisible();
   const publicDateBounds = await page.evaluate(() => {
-    const field = document.querySelector<HTMLInputElement>('.booking-card input[type="date"]')!.getBoundingClientRect();
+    const field = document.querySelector<HTMLButtonElement>('.public-date-trigger')!.getBoundingClientRect();
     const card = document.querySelector<HTMLElement>('.booking-card')!.getBoundingClientRect();
     return {fieldRight: field.right, cardRight: card.right, fieldLeft: field.left, cardLeft: card.left};
   });
   expect(publicDateBounds.fieldRight).toBeLessThanOrEqual(publicDateBounds.cardRight);
   expect(publicDateBounds.fieldLeft).toBeGreaterThanOrEqual(publicDateBounds.cardLeft);
+  await page.getByRole("button", {name: "Escolher data"}).click();
+  await expect(page.getByRole("heading", {name: "Escolha a data"})).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.getByRole("button", {name: /Corte/}).click();
   await expect(page.locator(".slots button")).toBeVisible();
   await page.locator(".slots button").click();
