@@ -22,7 +22,7 @@ def test_whatsapp_provider_uses_evolution_instance_route(monkeypatch):
     requests_post = __import__("apps.notifications.providers", fromlist=["requests"]).requests.post
     requests_post.assert_called_once_with(
         "https://whatsapp.example.com/message/sendText/barberhub",
-        json={"number": "5511999999999", "text": "Confirmação"},
+        json={"number": "5511999999999", "textMessage": {"text": "Confirmação"}},
         headers={"apikey": "secret"},
         timeout=10,
     )

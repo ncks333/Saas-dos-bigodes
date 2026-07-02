@@ -10,7 +10,7 @@ class WhatsAppProvider:
             raise RuntimeError("Provedor de WhatsApp não configurado.")
         response = requests.post(
             f"{settings.WHATSAPP_BASE_URL.rstrip('/')}/message/sendText/{settings.WHATSAPP_INSTANCE_NAME}",
-            json={"number": recipient, "text": message},
+            json={"number": recipient, "textMessage": {"text": message}},
             headers={"apikey": settings.WHATSAPP_API_KEY},
             timeout=10,
         )
