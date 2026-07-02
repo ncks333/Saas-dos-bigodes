@@ -8,7 +8,8 @@
 body { margin: 0; min-width: 320px; min-height: 100vh; background: #0d0e0e; }
 button, input, select, textarea { font: inherit; }
 button { color: inherit; cursor: pointer; }
-input, select, textarea { width: 100%; border: 1px solid #343531; border-radius: 10px; background: #171816; color: #f4f1e8; padding: 11px 13px; outline: none; transition: .18s; }
+input, select, textarea { width: 100%; min-width: 0; max-width: 100%; border: 1px solid #343531; border-radius: 10px; background: #171816; color: #f4f1e8; padding: 11px 13px; outline: none; transition: .18s; }
+input[type="date"], input[type="datetime-local"], input[type="time"] { display: block; min-height: 44px; }
 input:focus, select:focus, textarea:focus { border-color: #c7a85b; box-shadow: 0 0 0 3px #c7a85b18; }
 input[readonly] { color: #9d9d96; }
 label { display: grid; gap: 7px; color: #c8c7c1; font-size: 13px; font-weight: 600; }
@@ -167,7 +168,8 @@ td small { color: #777871; margin-top: 3px; }
 .public-header { display: flex; gap: 14px; align-items: center; margin-bottom: 25px; }
 .public-header p { color: #c7a85b; text-transform: uppercase; font-size: 10px; letter-spacing: .15em; margin-bottom: 3px; }
 .public-header h1 { font: 700 26px "Playfair Display"; margin: 0; }
-.booking-card, .success-card { background: #171816; border: 1px solid #30312c; border-radius: 17px; padding: clamp(20px, 5vw, 38px); box-shadow: 0 30px 90px #0004; }
+.booking-card, .success-card { min-width: 0; background: #171816; border: 1px solid #30312c; border-radius: 17px; padding: clamp(20px, 5vw, 38px); box-shadow: 0 30px 90px #0004; }
+.booking-card > * { min-width: 0; max-width: 100%; }
 .booking-step { display: flex; gap: 12px; margin: 8px 0 18px; }
 .booking-step:not(:first-child) { margin-top: 35px; border-top: 1px solid #2c2d28; padding-top: 28px; }
 .booking-step > span { width: 28px; height: 28px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 50%; background: #c7a85b; color: #151510; font-weight: 800; font-size: 12px; }
@@ -207,7 +209,8 @@ td small { color: #777871; margin-top: 3px; }
 @media (max-width: 760px) {
   .login-shell { grid-template-columns: 1fr; }.login-copy { display: none; }.login-card { padding: 28px; }
   .sidebar { transform: translateX(-105%); transition: .25s; box-shadow: 20px 0 50px #0008; }.sidebar.open { transform: translateX(0); }.mobile-only { display: grid; margin-left: auto; }.content { margin-left: 0; padding: 25px 17px 60px; }.mobile-menu { display: grid; margin-bottom: 20px; }
-  .page-header { align-items: flex-start; }.page-header h1 { font-size: 28px; }.page-header .btn { font-size: 0; padding: 9px 12px; }.page-header .btn svg { width: 19px; }
+  .page-header { display: grid; align-items: flex-start; }.page-header h1 { font-size: 28px; }.page-header .btn { width: fit-content; font-size: 13px; padding: 9px 12px; }.page-header .btn svg { width: 19px; }
+  .toolbar { display: grid; align-items: start; gap: 8px; }.toolbar label { width: 100%; min-width: 0; }.toolbar span { padding-bottom: 0; }
   .dashboard-grid, .cards-grid { grid-template-columns: 1fr; }.agenda-list article { grid-template-columns: 55px 1fr auto; gap: 10px; }.agenda-list select { grid-column: 1 / -1; }.agenda-list .agenda-actions { grid-column: 1 / -1; justify-content: flex-end; }.agenda-list time { font-size: 17px; }
   .form-grid { grid-template-columns: 1fr; }.form-grid > * { grid-column: 1 !important; }.hour-row { grid-template-columns: 1fr 88px auto 88px; }.service-options { grid-template-columns: 1fr; }.slots { grid-template-columns: repeat(4, 1fr); }
 }

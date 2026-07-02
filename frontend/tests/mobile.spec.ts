@@ -55,6 +55,13 @@ test("agendamento público funciona no celular", async ({page}) => {
     }
   });
   await page.goto("/agendar/bigodes");
+  const publicDateBounds = await page.evaluate(() => {
+    const field = document.querySelector<HTMLInputElement>('.booking-card input[type="date"]')!.getBoundingClientRect();
+    const card = document.querySelector<HTMLElement>('.booking-card')!.getBoundingClientRect();
+    return {fieldRight: field.right, cardRight: card.right, fieldLeft: field.left, cardLeft: card.left};
+  });
+  expect(publicDateBounds.fieldRight).toBeLessThanOrEqual(publicDateBounds.cardRight);
+  expect(publicDateBounds.fieldLeft).toBeGreaterThanOrEqual(publicDateBounds.cardLeft);
   await page.getByRole("button", {name: /Corte/}).click();
   await expect(page.locator(".slots button")).toBeVisible();
   await page.locator(".slots button").click();
@@ -73,11 +80,24 @@ test("painel abre a navegação móvel sem estourar a tela", async ({page}) => {
   });
   await page.route("**/api/v1/**", async route => {
     const url = route.request().url();
-    await route.fulfill({json: url.includes("daily_summary")
+    const json = url.includes("daily_summary")
       ? {total: 0, confirmed: 0, pending: 0, awaiting: 0, cancelled: 0, completed: 0, no_show: 0, revenue: 0}
-      : {daily_revenue: 0, monthly_revenue: 0, cancellation_rate: 0, popular_hours: []}});
+      : url.includes("/appointments/") ? []
+      : {daily_revenue: 0, monthly_revenue: 0, cancellation_rate: 0, popular_hours: []};
+    await route.fulfill({json});
   });
   await page.goto("/login");
+  await page.locator(".mobile-menu").click();
+  await expect(page.locator(".sidebar.open")).toBeVisible();
+  await page.getByRole("button", {name: "Agenda", exact: true}).click();
+  await expect(page.getByRole("heading", {name: "Agenda"})).toBeVisible();
+  await expect(page.getByRole("button", {name: "Novo agendamento"})).toBeVisible();
+  const toolbarOverlaps = await page.evaluate(() => {
+    const field = document.querySelector<HTMLInputElement>('.toolbar input[type="date"]')!.getBoundingClientRect();
+    const count = document.querySelector<HTMLElement>('.toolbar > span')!.getBoundingClientRect();
+    return !(field.right <= count.left || count.right <= field.left || field.bottom <= count.top || count.bottom <= field.top);
+  });
+  expect(toolbarOverlaps).toBe(false);
   await page.locator(".mobile-menu").click();
   await expect(page.locator(".sidebar.open")).toBeVisible();
   await expect(page.getByRole("button", {name: "Agenda", exact: true})).toBeVisible();
