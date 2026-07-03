@@ -10,6 +10,6 @@ export function usePageMetadata(title: string, description: string, path: string
     descriptionMeta?.setAttribute("content", description);
     ogTitle?.setAttribute("content", title);
     ogDescription?.setAttribute("content", description);
-    ogUrl?.setAttribute("content", `https://mr-barberhub.vercel.app${path}`);
+    ogUrl?.setAttribute("content", `https://app.mrbarberhub.com.br${path}`);
   }, [description, path, title]);
 }
