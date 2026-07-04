@@ -17,6 +17,20 @@ test("login cabe e permanece utilizável no celular", async ({page}) => {
   await noHorizontalOverflow(page);
 });
 
+test("login traduz erro de credenciais inválidas", async ({page}) => {
+  await page.route("**/api/v1/auth/login/", route => route.fulfill({
+    status: 401,
+    json: {detail: "No active account found with the given credentials"},
+  }));
+  await page.goto("/login");
+  await page.getByLabel("Usuário").fill("admin");
+  await page.getByLabel("Senha").fill("SenhaAntiga123");
+  await page.getByRole("button", {name: "Entrar"}).click();
+
+  await expect(page.getByText("Usuário ou senha inválidos.")).toBeVisible();
+  await expect(page.getByText("No active account found with the given credentials")).toHaveCount(0);
+});
+
 test("landing page apresenta produto e chamadas principais", async ({page}) => {
   await page.goto("/");
   await expect(page.getByRole("heading", {name: /Menos conversa perdida/})).toBeVisible();

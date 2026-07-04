@@ -70,6 +70,12 @@ const errorText = (error: unknown) => {
   if (error.response.status >= 500) return "Serviço temporariamente indisponível. Tente novamente em instantes.";
   return findErrorMessage(error.response?.data) ?? "Revise os dados e tente novamente.";
 };
+const loginErrorText = (error: unknown) => {
+  if (axios.isAxiosError(error) && error.response?.status === 401) {
+    return "Usuário ou senha inválidos.";
+  }
+  return errorText(error);
+};
 
 function Button({children, variant = "primary", ...props}: React.ButtonHTMLAttributes<HTMLButtonElement> & {variant?: "primary" | "secondary" | "danger" | "ghost"}) {
   return <button {...props} className={`btn btn-${variant} ${props.className ?? ""}`}>{children}</button>;
@@ -103,7 +109,7 @@ function LoginPage({onLogin}: {onLogin: (user: SessionUser) => void}) {
     localStorage.setItem("access", data.access); localStorage.setItem("refresh", data.refresh);
     localStorage.setItem("user", JSON.stringify(data.user)); onLogin(data.user);
   }});
-  return <main className="login-shell"><section className="login-copy"><div className="brand-mark"><Scissors/></div><p className="eyebrow">M&amp;R BarberHub</p><h1>Sua barbearia organizada.<br/><span>Seu tempo de volta.</span></h1><p>Agenda, clientes, equipe e serviços em um painel simples de usar.</p><p className="company-credit">Um produto <strong>M&amp;R Solutions</strong></p></section><section className="login-card"><a className="back-link" href="/">Voltar ao site</a><h2>Bem-vindo</h2><p>Entre para administrar sua barbearia.</p><form onSubmit={e => {e.preventDefault(); login.mutate();}}><label>Usuário<input autoComplete="username" autoFocus value={username} onChange={e => setUsername(e.target.value)}/></label><label>Senha<input autoComplete="current-password" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Sua senha"/></label><a className="forgot-link" href="/recuperar-senha">Esqueci minha senha</a><ErrorMessage error={login.error}/><Button disabled={!username || password.length < 8 || login.isPending}>{login.isPending ? "Entrando..." : "Entrar"}</Button></form><p className="company-credit login-credit">Tecnologia por <strong>M&amp;R Solutions</strong></p></section></main>;
+  return <main className="login-shell"><section className="login-copy"><div className="brand-mark"><Scissors/></div><p className="eyebrow">M&amp;R BarberHub</p><h1>Sua barbearia organizada.<br/><span>Seu tempo de volta.</span></h1><p>Agenda, clientes, equipe e serviços em um painel simples de usar.</p><p className="company-credit">Um produto <strong>M&amp;R Solutions</strong></p></section><section className="login-card"><a className="back-link" href="/">Voltar ao site</a><h2>Bem-vindo</h2><p>Entre para administrar sua barbearia.</p><form onSubmit={e => {e.preventDefault(); login.mutate();}}><label>Usuário<input autoComplete="username" autoFocus value={username} onChange={e => setUsername(e.target.value)}/></label><label>Senha<input autoComplete="current-password" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Sua senha"/></label><a className="forgot-link" href="/recuperar-senha">Esqueci minha senha</a>{login.error && <p className="form-error">{loginErrorText(login.error)}</p>}<Button disabled={!username || password.length < 8 || login.isPending}>{login.isPending ? "Entrando..." : "Entrar"}</Button></form><p className="company-credit login-credit">Tecnologia por <strong>M&amp;R Solutions</strong></p></section></main>;
 }
 
 const navItems: {page: PageName; label: string; icon: typeof CalendarDays; admin?: boolean}[] = [
