@@ -13,6 +13,8 @@ if not TURNSTILE_SECRET_KEY:  # noqa: F405
     raise RuntimeError("TURNSTILE_SECRET_KEY deve ser configurada em produção")
 if EMAIL_BACKEND == "django.core.mail.backends.console.EmailBackend":  # noqa: F405
     raise RuntimeError("Configure um EMAIL_BACKEND transacional em produção")
+if EMAIL_BACKEND == "core.email_backends.ResendEmailBackend" and not RESEND_API_KEY:  # noqa: F405
+    raise RuntimeError("RESEND_API_KEY deve ser configurada para o backend Resend")
 if not FRONTEND_URL.startswith("https://"):  # noqa: F405
     raise RuntimeError("FRONTEND_URL deve usar HTTPS em produção")
 if not all((WHATSAPP_BASE_URL, WHATSAPP_API_KEY, WHATSAPP_INSTANCE_NAME)):  # noqa: F405
