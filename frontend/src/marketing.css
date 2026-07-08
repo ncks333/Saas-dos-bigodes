@@ -47,26 +47,15 @@
   display: grid;
   place-items: center;
   border-radius: 10px;
-  background: linear-gradient(135deg, #f5cf65, var(--gold));
-  color: #080808;
   box-shadow: 0 14px 42px #d4af3726;
+  overflow: hidden;
 }
 
-.brand-symbol svg {
-  width: 29px;
-  height: 29px;
-}
-
-.brand-symbol .chair-fill {
-  fill: currentColor;
-}
-
-.brand-symbol .scissor-stroke {
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 3.2;
+.brand-symbol img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
 }
 
 .marketing-brand strong {

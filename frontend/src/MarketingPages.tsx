@@ -31,20 +31,7 @@ function Brand() {
 }
 
 function BrandMark() {
-  return <span className="brand-symbol" aria-hidden="true">
-    <svg viewBox="0 0 48 48" role="img">
-      <path className="chair-fill" d="M8 24c0-1.3 1-2.3 2.3-2.3h5.1c1.3 0 2.3 1 2.3 2.3v12.8c0 1.3-1 2.3-2.3 2.3h-5.1A2.3 2.3 0 0 1 8 36.8V24Z"/>
-      <path className="chair-fill" d="M30.3 24c0-1.3 1-2.3 2.3-2.3h5.1c1.3 0 2.3 1 2.3 2.3v12.8c0 1.3-1 2.3-2.3 2.3h-5.1c-1.3 0-2.3-1-2.3-2.3V24Z"/>
-      <path className="chair-fill" d="M16 30c0-1.6 1.3-2.9 2.9-2.9h10.2c1.6 0 2.9 1.3 2.9 2.9v3H16v-3Z"/>
-      <rect className="chair-fill" x="18.2" y="34.8" width="11.6" height="4.5" rx="1.5"/>
-      <path className="chair-fill" d="M20 41h8v3h-8z"/>
-      <path className="chair-fill" d="M14 38h20v3H14z"/>
-      <path className="scissor-stroke" d="m15 10 18 18"/>
-      <path className="scissor-stroke" d="m33 10-18 18"/>
-      <circle className="scissor-stroke" cx="15" cy="28" r="3.3"/>
-      <circle className="scissor-stroke" cx="33" cy="28" r="3.3"/>
-    </svg>
-  </span>;
+  return <span className="brand-symbol" aria-hidden="true"><img src="/barberhub-icon.png" alt=""/></span>;
 }
 
 export function LandingPage() {

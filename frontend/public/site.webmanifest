@@ -9,9 +9,9 @@
   "theme_color": "#171816",
   "icons": [
     {
-      "src": "/favicon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "/barberhub-icon.png",
+      "sizes": "1000x1000",
+      "type": "image/png",
       "purpose": "any maskable"
     }
   ]
