@@ -106,6 +106,7 @@ test("painel abre a navegação móvel sem estourar a tela", async ({page}) => {
     await route.fulfill({json});
   });
   await page.goto("/login");
+  await expect(page.locator(".sidebar-brand img").first()).toHaveAttribute("src", "/barberhub-icon-v2.png");
   await page.locator(".mobile-menu").click();
   await expect(page.locator(".sidebar.open")).toBeVisible();
   await page.getByRole("button", {name: "Agenda", exact: true}).click();
