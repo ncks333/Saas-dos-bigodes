@@ -1,25 +1,68 @@
 import {
   ArrowRight,
+  Armchair,
+  BarChart3,
+  Boxes,
   CalendarDays,
+  Check,
   CheckCircle2,
-  LayoutDashboard,
-  MessageCircle,
+  Crown,
+  DollarSign,
+  Package,
   Scissors,
   ShieldCheck,
+  Star,
+  UserRound,
   Users,
 } from "lucide-react";
 import {usePageMetadata} from "./metadata";
 import "./marketing.css";
 
-const features = [
-  {icon: CalendarDays, title: "Agenda sem conflito", text: "Horários, bloqueios e duração de cada serviço organizados no mesmo fluxo."},
-  {icon: MessageCircle, title: "Agendamento online", text: "Cliente escolhe serviço, data e horário pelo celular, sem depender de troca de mensagens."},
-  {icon: Users, title: "Clientes e equipe", text: "Histórico da base, acesso por perfil e rotina da equipe em um painel simples."},
-  {icon: LayoutDashboard, title: "Visão do negócio", text: "Faturamento, atendimentos, cancelamentos e horários procurados sempre à vista."},
+const trustLogos = ["BLACK", "STUDIO7", "THE BROTHERS", "ALFA", "DIMENZZO"];
+
+const benefits = [
+  {icon: CalendarDays, title: "Mais tempo para o que importa", text: "Automação que elimina tarefas manuais."},
+  {icon: Users, title: "Organização completa", text: "Agenda, clientes, serviços e equipe integrados."},
+  {icon: BarChart3, title: "Mais controle, mais lucro", text: "Relatórios e financeiro para decisões inteligentes."},
+  {icon: Crown, title: "Clientes mais satisfeitos", text: "Experiência rápida e profissional do agendamento ao pós."},
+];
+
+const productFeatures = [
+  {icon: CalendarDays, title: "Agenda inteligente"},
+  {icon: UserRound, title: "Clientes e histórico"},
+  {icon: ShieldCheck, title: "Serviços e preços"},
+  {icon: Users, title: "Equipe e comissões"},
+  {icon: DollarSign, title: "Financeiro completo"},
+  {icon: BarChart3, title: "Relatórios avançados"},
+  {icon: Package, title: "Estoque e produtos"},
+  {icon: Boxes, title: "Permissões"},
+];
+
+const results = [
+  {value: "+35%", label: "Aumento médio no faturamento"},
+  {value: "-80%", label: "Menos faltas com lembretes automáticos"},
+  {value: "2x", label: "Mais agilidade na gestão do dia a dia"},
+  {value: "+50 mil", label: "Agendamentos realizados por mês"},
+];
+
+const testimonials = [
+  {name: "Rafael Lima", shop: "The Brothers Barber Shop", text: "BarberHub mudou completamente nossa barbearia. Hoje temos controle total e mais organização."},
+  {name: "Lucas Martins", shop: "Studio7 Barber Club", text: "A agenda inteligente acabou com as falhas e aumentou nosso faturamento em poucos meses."},
+  {name: "Thiago Alves", shop: "Dimenzzo Barbearia", text: "Sistema completo, fácil de usar e feito para barbeiro. Recomendo demais."},
+];
+
+const plans = [
+  {name: "Básico", price: "79", description: "Ideal para barbearias pequenas.", featured: false, items: ["Agenda online", "Clientes ilimitados", "Relatórios básicos", "Suporte via chat"]},
+  {name: "Profissional", price: "129", description: "Para barbearias que querem crescer.", featured: true, items: ["Tudo do Básico", "Financeiro completo", "Comissões e equipe", "Relatórios avançados"]},
+  {name: "Premium", price: "199", description: "Para redes e barbearias com alto volume.", featured: false, items: ["Tudo do Profissional", "Multiunidades", "Permissões avançadas", "Suporte prioritário"]},
 ];
 
 function Brand() {
-  return <a className="marketing-brand" href="/" aria-label="M&R BarberHub — início"><span><Scissors/></span><strong>M&amp;R BarberHub</strong></a>;
+  return <a className="marketing-brand" href="/" aria-label="M&R BarberHub — início"><BrandMark/><strong>M&amp;R BarberHub</strong></a>;
+}
+
+function BrandMark() {
+  return <span className="brand-symbol" aria-hidden="true"><Armchair/><Scissors/></span>;
 }
 
 export function LandingPage() {
@@ -27,7 +70,7 @@ export function LandingPage() {
   return <main className="marketing-shell">
     <header className="marketing-nav">
       <Brand/>
-      <nav aria-label="Navegação principal"><a href="#recursos">Recursos</a><a href="#como-funciona">Como funciona</a><a href="#seguranca">Segurança</a></nav>
+      <nav aria-label="Navegação principal"><a href="#recursos">Recursos</a><a href="#sistema">Como funciona</a><a href="#precos">Preços</a><a href="#depoimentos">Depoimentos</a></nav>
       <a className="marketing-login" href="/login">Acessar painel <ArrowRight/></a>
     </header>
 
@@ -36,33 +79,68 @@ export function LandingPage() {
         <p className="marketing-kicker"><span/> Feito para a rotina da barbearia</p>
         <h1>Menos conversa perdida.<br/><em>Mais cadeira ocupada.</em></h1>
         <p className="hero-lead">Centralize agenda, clientes, equipe e serviços. Seu cliente marca pelo celular; você acompanha tudo em um painel direto.</p>
-        <div className="hero-actions"><a className="marketing-primary" href="/agendar/bigodes">Ver agendamento <ArrowRight/></a><a className="marketing-secondary" href="/login">Entrar no sistema</a></div>
+        <div className="hero-actions"><a className="marketing-primary" href="/agendar/bigodes">Ver agendamento <ArrowRight/></a><a className="marketing-secondary" href="/login">Fazer teste grátis</a></div>
         <ul className="hero-checks"><li><CheckCircle2/> Sem conflito de horários</li><li><CheckCircle2/> Funciona no celular</li><li><CheckCircle2/> Dados separados por barbearia</li></ul>
       </div>
 
       <div className="product-preview" aria-label="Prévia do painel BarberHub">
-        <div className="preview-top"><span className="preview-logo"><Scissors/></span><div><strong>Visão geral</strong><small>Resumo do dia</small></div><span className="preview-avatar">MR</span></div>
-        <div className="preview-stats"><article><small>Atendimentos</small><strong>8</strong><span>Hoje</span></article><article><small>Faturamento</small><strong>R$ 315</strong><span>Confirmado</span></article></div>
+        <div className="preview-top"><span className="preview-logo"><BrandMark/></span><div><strong>Visão geral</strong><small>Resumo do dia</small></div><span className="preview-avatar">MR</span></div>
+        <div className="preview-stats"><article><small>Atendimentos</small><strong>23</strong><span>Hoje</span></article><article><small>Faturamento</small><strong>R$ 2.840</strong><span>Hoje</span></article></div>
         <div className="preview-agenda"><div className="preview-title"><strong>Próximos horários</strong><span>Hoje</span></div><div className="preview-row"><time>10:30</time><span><strong>Corte + Barba</strong><small>Cliente confirmado</small></span><i>Confirmado</i></div><div className="preview-row"><time>11:30</time><span><strong>Corte</strong><small>Agendamento online</small></span><i className="awaiting">Aguardando</i></div><div className="preview-row"><time>14:00</time><span><strong>Barba</strong><small>Cliente recorrente</small></span><i>Confirmado</i></div></div>
         <div className="preview-accent"/>
       </div>
     </section>
 
-    <section className="marketing-strip" aria-label="Principais benefícios"><span>Agenda organizada</span><i/><span>Atendimento mais rápido</span><i/><span>Gestão sem planilha</span><i/><span>Experiência profissional</span></section>
+    <section className="trusted-strip" aria-label="Barbearias que confiam">
+      <p>Barbearias que confiam</p>
+      <div>{trustLogos.map(logo => <strong key={logo}>{logo}<small>Barbershop</small></strong>)}</div>
+    </section>
 
     <section className="marketing-section" id="recursos">
-      <div className="section-heading"><p className="marketing-kicker">Tudo no lugar certo</p><h2>Operação simples para quem precisa trabalhar.</h2><p>Ferramentas essenciais, sem transformar sua rotina em curso de software.</p></div>
-      <div className="feature-grid">{features.map(({icon:Icon,title,text},index)=><article key={title}><span className="feature-number">0{index+1}</span><Icon/><h3>{title}</h3><p>{text}</p></article>)}</div>
+      <div className="section-heading centered"><p className="marketing-kicker">Tudo que sua barbearia precisa em um só lugar</p></div>
+      <div className="benefit-grid">{benefits.map(({icon:Icon,title,text})=><article key={title}><Icon/><h3>{title}</h3><p>{text}</p></article>)}</div>
     </section>
 
-    <section className="workflow-section" id="como-funciona">
-      <div className="workflow-copy"><p className="marketing-kicker">Do clique à cadeira</p><h2>Agendar fica fácil para os dois lados.</h2><p>Cliente encontra um horário livre. Pedido entra na agenda. Equipe acompanha e confirma. Sem copiar dados de conversa para planilha.</p><a href="/agendar/bigodes">Testar fluxo público <ArrowRight/></a></div>
-      <ol className="workflow-steps"><li><span>1</span><div><strong>Cliente escolhe serviço</strong><p>Preço e duração aparecem antes da reserva.</p></div></li><li><span>2</span><div><strong>Seleciona horário livre</strong><p>Agenda considera expediente, bloqueios e outros atendimentos.</p></div></li><li><span>3</span><div><strong>Equipe recebe o pedido</strong><p>Reserva fica centralizada e pronta para acompanhamento.</p></div></li></ol>
+    <section className="system-section" id="sistema">
+      <div className="system-copy"><p className="marketing-kicker">Sistema feito para barbeiros reais</p><h2>Interface simples, poderosa e pensada para a rotina da barbearia.</h2><p>Do agendamento ao financeiro, tudo conectado. Acesse de qualquer lugar, no computador ou celular.</p><a className="marketing-primary" href="/login">Conhecer o sistema <ArrowRight/></a></div>
+      <div className="device-showcase" aria-label="Dashboard em notebook e celular">
+        <div className="laptop-frame">
+          <div className="dashboard-screen">
+            <aside>{["Agenda", "Clientes", "Serviços", "Financeiro", "Relatórios"].map(item => <span key={item}>{item}</span>)}</aside>
+            <section>
+              <div className="screen-header"><strong>Dashboard</strong><i/></div>
+              <div className="chart-bars">{Array.from({length: 14}).map((_, index) => <span key={index} style={{height: `${34 + (index % 5) * 11}px`}}/>)}</div>
+              <div className="screen-cards"><b/><b/><b/><b/></div>
+            </section>
+          </div>
+        </div>
+        <div className="phone-frame">
+          <div className="phone-screen"><span>Hoje</span><strong>23 horários</strong><i/><i/><i/></div>
+        </div>
+      </div>
     </section>
 
-    <section className="security-section" id="seguranca"><div className="security-icon"><ShieldCheck/></div><div><p className="marketing-kicker">Segurança desde a base</p><h2>Cada barbearia vê somente seus dados.</h2><p>Isolamento por estabelecimento, acesso por perfil, autenticação protegida, trilha de auditoria e verificação anti-bot no agendamento público.</p></div><ul><li><CheckCircle2/> Sessões protegidas</li><li><CheckCircle2/> Controle de acesso</li><li><CheckCircle2/> Auditoria de ações</li></ul></section>
+    <section className="feature-band" aria-label="Recursos do sistema">
+      <p className="marketing-kicker">Recursos que transformam a rotina</p>
+      <div>{productFeatures.map(({icon:Icon,title}) => <article key={title}><Icon/><span>{title}</span></article>)}</div>
+    </section>
 
-    <section className="marketing-cta"><div><p className="marketing-kicker">Sua agenda merece clareza</p><h2>Abra o painel. Veja o dia. Comece a atender.</h2></div><a className="marketing-primary" href="/login">Acessar BarberHub <ArrowRight/></a></section>
+    <section className="results-section" aria-label="Resultados">
+      <p className="marketing-kicker">Resultados que você sente no dia a dia</p>
+      <div>{results.map(item => <article key={item.value}><strong>{item.value}</strong><span>{item.label}</span></article>)}</div>
+    </section>
+
+    <section className="testimonial-section" id="depoimentos">
+      <p className="marketing-kicker">Quem usa, recomenda</p>
+      <div>{testimonials.map(testimonial => <article key={testimonial.name}><div className="stars">{Array.from({length: 5}).map((_, index) => <Star key={index}/>)}</div><p>"{testimonial.text}"</p><footer><span>{testimonial.name.charAt(0)}</span><div><strong>{testimonial.name}</strong><small>{testimonial.shop}</small></div></footer></article>)}</div>
+    </section>
+
+    <section className="pricing-section" id="precos">
+      <p className="marketing-kicker">Planos para barbearias de todos os tamanhos</p>
+      <div>{plans.map(plan => <article key={plan.name} className={plan.featured ? "featured" : undefined}>{plan.featured && <small className="plan-badge">Mais escolhido</small>}<h3>{plan.name}</h3><p><strong>R$ {plan.price}</strong>/mês</p><span>{plan.description}</span><ul>{plan.items.map(item => <li key={item}><Check/>{item}</li>)}</ul><a href="/login">Começar agora</a></article>)}</div>
+    </section>
+
+    <section className="marketing-cta"><div><h2>Pronto para transformar sua barbearia?</h2><p>Teste grátis por 7 dias. Sem cartão de crédito.</p></div><a className="marketing-primary" href="/login">Começar teste grátis <ArrowRight/></a></section>
 
     <footer className="marketing-footer"><Brand/><p>Produto da M&amp;R Solutions.</p><div><a href="/privacidade">Privacidade</a><a href="/login">Painel</a></div></footer>
   </main>;
