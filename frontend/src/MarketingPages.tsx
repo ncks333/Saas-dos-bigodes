@@ -31,7 +31,7 @@ function Brand() {
 }
 
 function BrandMark() {
-  return <span className="brand-symbol" aria-hidden="true"><img src="/barberhub-icon.png" alt=""/></span>;
+  return <span className="brand-symbol" aria-hidden="true"><img src="/barberhub-icon-v2.png" alt=""/></span>;
 }
 
 export function LandingPage() {

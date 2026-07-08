@@ -9,7 +9,7 @@
   "theme_color": "#171816",
   "icons": [
     {
-      "src": "/barberhub-icon.png",
+      "src": "/barberhub-icon-v2.png",
       "sizes": "1193x1193",
       "type": "image/png",
       "purpose": "any maskable"
