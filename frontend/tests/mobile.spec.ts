@@ -69,6 +69,7 @@ test("agendamento público funciona no celular", async ({page}) => {
     }
   });
   await page.goto("/agendar/bigodes");
+  await expect(page.locator(".public-header img").first()).toHaveAttribute("src", "/barberhub-icon-v2.png");
   await expect(page.getByRole("button", {name: "Escolher data"})).toBeVisible();
   const publicDateBounds = await page.evaluate(() => {
     const field = document.querySelector<HTMLButtonElement>('.public-date-trigger')!.getBoundingClientRect();

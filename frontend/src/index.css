@@ -164,20 +164,25 @@ td small { color: #777871; margin-top: 3px; }
 .loading span:nth-child(2) { animation-delay: .2s; }.loading span:nth-child(3) { animation-delay: .4s; }
 @keyframes pulse { to { opacity: .25; transform: translateY(-5px); } }
 
-.public-shell { min-height: 100vh; width: min(760px, 100%); margin: auto; padding: 45px 20px 80px; }
-.public-header { display: flex; gap: 14px; align-items: center; margin-bottom: 25px; }
-.public-header p { color: #c7a85b; text-transform: uppercase; font-size: 10px; letter-spacing: .15em; margin-bottom: 3px; }
-.public-header h1 { font: 700 26px "Playfair Display"; margin: 0; }
-.booking-card, .success-card { min-width: 0; background: #171816; border: 1px solid #30312c; border-radius: 17px; padding: clamp(20px, 5vw, 38px); box-shadow: 0 30px 90px #0004; }
+.public-shell { min-height: 100vh; width: min(820px, 100%); margin: auto; padding: 45px 20px 80px; background: radial-gradient(circle at 70% 0, #d4af3712, transparent 32%); }
+.public-header { display: flex; gap: 14px; align-items: center; margin-bottom: 25px; padding-bottom: 22px; border-bottom: 1px solid #ffffff14; }
+.public-brand-mark { width: 46px; height: 46px; flex: 0 0 auto; overflow: hidden; border-radius: 10px; box-shadow: 0 14px 42px #d4af3726; }
+.public-brand-mark img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.public-header p { color: #d4af37; text-transform: uppercase; font-size: 10px; font-weight: 800; letter-spacing: .15em; margin-bottom: 5px; }
+.public-header h1 { font: 800 clamp(28px, 5vw, 44px)/1.02 "Sora", sans-serif; margin: 0; }
+.booking-card, .success-card { min-width: 0; background: linear-gradient(145deg, #1b1b1b, #111); border: 1px solid #ffffff18; border-radius: 8px; padding: clamp(20px, 5vw, 38px); box-shadow: 0 34px 100px #0008; }
 .booking-card > * { min-width: 0; max-width: 100%; }
+.booking-card input:not([type="checkbox"]) { border-color: #ffffff1f; border-radius: 6px; background: #202020a8; }
+.booking-card input:not([type="checkbox"]):focus { border-color: #d4af37; box-shadow: 0 0 0 3px #d4af3718; }
+.booking-card label { color: #d4d4d4; }
 .booking-step { display: flex; gap: 12px; margin: 8px 0 18px; }
-.booking-step:not(:first-child) { margin-top: 35px; border-top: 1px solid #2c2d28; padding-top: 28px; }
-.booking-step > span { width: 28px; height: 28px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 50%; background: #c7a85b; color: #151510; font-weight: 800; font-size: 12px; }
-.booking-step h2 { font-size: 17px; margin-bottom: 3px; }
-.booking-step p { color: #80817a; font-size: 12px; margin: 0; }
+.booking-step:not(:first-child) { margin-top: 36px; border-top: 1px solid #ffffff12; padding-top: 28px; }
+.booking-step > span { width: 30px; height: 30px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 6px; background: linear-gradient(135deg, #f5cf65, #d4af37); color: #080808; font: 800 12px "Sora", sans-serif; }
+.booking-step h2 { font: 800 18px "Sora", sans-serif; margin-bottom: 3px; }
+.booking-step p { color: #9d9d9d; font-size: 12px; margin: 0; }
 .public-date-picker { width: 100%; min-width: 0; }
-.public-date-trigger { width: 100%; min-height: 48px; padding: 11px 13px; display: flex; align-items: center; gap: 10px; border: 1px solid #343531; border-radius: 10px; background: #171816; color: #f4f1e8; text-align: left; }
-.public-date-trigger svg { width: 18px; color: #c7a85b; }
+.public-date-trigger { width: 100%; min-height: 50px; padding: 12px 14px; display: flex; align-items: center; gap: 10px; border: 1px solid #ffffff1f; border-radius: 6px; background: #202020a8; color: #fff; text-align: left; }
+.public-date-trigger svg { width: 18px; color: #d4af37; }
 .public-date-trigger span { text-transform: capitalize; }
 .calendar-picker { padding: 20px 22px 24px; }
 .calendar-month { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; margin-bottom: 18px; text-align: center; text-transform: capitalize; }
@@ -186,31 +191,35 @@ td small { color: #777871; margin-top: 3px; }
 .calendar-days button { aspect-ratio: 1; min-width: 0; border: 0; border-radius: 50%; background: transparent; color: #e2e0d8; font-size: 13px; }
 .calendar-days button:hover:not(:disabled) { background: #292a25; }
 .calendar-days button.outside { color: #55564f; }
-.calendar-days button.active { background: #c7a85b; color: #151510; font-weight: 800; }
+.calendar-days button.active { background: #d4af37; color: #080808; font-weight: 800; }
 .calendar-days button:disabled { color: #393a35; cursor: not-allowed; }
 .service-options { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
-.service-options button { display: flex; justify-content: space-between; align-items: center; border: 1px solid #343530; background: #20211e; border-radius: 11px; padding: 14px; text-align: left; }
-.service-options button.selected, .slots button.selected { border-color: #c7a85b; background: #c7a85b14; }
-.service-options small { display: block; color: #777; margin-top: 4px; }
-.service-options strong { color: #dec370; }
+.service-options button { min-height: 82px; display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 1px solid #ffffff1f; background: #202020a8; border-radius: 6px; padding: 15px; text-align: left; }
+.service-options button:hover, .slots button:hover:not(:disabled) { border-color: #d4af3766; background: #242424; }
+.service-options button.selected { border-color: #d4af37; background: #d4af3714; box-shadow: inset 0 0 0 1px #d4af3733; }
+.slots button.selected { border-color: #00c389; background: #00c38918; color: #42d9a7; box-shadow: inset 0 0 0 1px #00c38933; }
+.service-options small { display: block; color: #8e8e8e; margin-top: 4px; }
+.service-options strong { color: #f5c557; font-family: "JetBrains Mono", monospace; }
 .slots { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 14px; }
-.slots button { border: 1px solid #363732; background: #20211e; padding: 10px 5px; border-radius: 9px; }
-.slots p { grid-column: 1/-1; color: #777; }
+.slots button { min-height: 42px; border: 1px solid #ffffff1f; background: #202020a8; padding: 10px 5px; border-radius: 6px; color: #fff; font-family: "JetBrains Mono", monospace; font-weight: 700; }
+.slots p { grid-column: 1/-1; color: #8e8e8e; }
 .slot-error { grid-column: 1/-1; display: grid; gap: 10px; justify-items: start; }
 .slots .slot-error p.form-error { color: #ef8e88; }
 .slot-error .btn { width: auto; }
 .booking-submit { width: 100%; margin-top: 22px; }
-.privacy-check { grid-template-columns: auto 1fr; align-items: start; gap: 10px; margin-top: 20px; color: #92938c; font-weight: 400; line-height: 1.5; }
-.privacy-check input { width: 17px; height: 17px; margin-top: 1px; accent-color: #c7a85b; }
-.privacy-check a { color: #dec370; }
+.privacy-check { grid-template-columns: auto 1fr; align-items: start; gap: 10px; margin-top: 20px; color: #a8a8a8; font-weight: 400; line-height: 1.5; }
+.privacy-check input { width: 17px; height: 17px; margin-top: 1px; accent-color: #d4af37; }
+.privacy-check a { color: #f5c557; }
 .success-card { margin-top: 18vh; text-align: center; }
-.success-icon { width: 65px; height: 65px; margin: 0 auto 20px; display: grid; place-items: center; border-radius: 50%; background: #c7a85b; color: #151510; }
+.success-icon { width: 65px; height: 65px; margin: 0 auto 20px; display: grid; place-items: center; border-radius: 8px; background: linear-gradient(135deg, #f5cf65, #d4af37); color: #080808; }
 .success-icon.error-icon { background: #8d2d2d; color: #fff; }
 .public-state .loading { min-height: 65px; }
 .success-card h1 { font: 700 32px "Playfair Display"; }
 .success-card > p:not(.eyebrow) { color: #92938c; max-width: 430px; margin: 0 auto 25px; }
 .success-card .public-credit { margin-top: 28px !important; margin-bottom: 0 !important; }
 .public-credit { margin-top: 18px; }
+.booking-submit { min-height: 48px; border-radius: 6px; background: linear-gradient(135deg, #f5cf65, #d4af37); color: #080808; }
+.booking-submit:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.05); }
 .route-loading { min-height: 100vh; display: flex; align-items: center; justify-content: center; gap: 6px; background: #0d0e0e; }
 .route-loading span { width: 8px; height: 8px; border-radius: 50%; background: #c7a85b; animation: pulse .8s infinite alternate; }
 .route-loading span:nth-child(2) { animation-delay: .2s; }.route-loading span:nth-child(3) { animation-delay: .4s; }
