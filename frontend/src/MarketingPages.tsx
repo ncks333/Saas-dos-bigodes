@@ -27,24 +27,22 @@ const productFeatures = [
 ];
 
 function Brand() {
-  return <a className="marketing-brand" href="/" aria-label="M&R BarberHub — início"><BrandMark/><strong>M&amp;R BarberHub</strong></a>;
+  return <a className="marketing-brand" href="/" aria-label="M&R BarberHub — início"><BrandMark/><strong><span>M&amp;R</span> Barber<span>Hub</span></strong></a>;
 }
 
 function BrandMark() {
   return <span className="brand-symbol" aria-hidden="true">
     <svg viewBox="0 0 48 48" role="img">
-      <path d="M16 29h16"/>
-      <path d="M15 19v15"/>
-      <path d="M33 19v15"/>
-      <path d="M18 34h12"/>
-      <path d="M20 22h8c3 0 5 2 5 5v2H15v-2c0-3 2-5 5-5Z"/>
-      <path d="M18 38h12"/>
-      <path d="M20 29v9"/>
-      <path d="M28 29v9"/>
-      <path d="m18 10 12 12"/>
-      <path d="m30 10-12 12"/>
-      <circle cx="16" cy="8" r="3"/>
-      <circle cx="32" cy="8" r="3"/>
+      <path className="chair-fill" d="M8 24c0-1.3 1-2.3 2.3-2.3h5.1c1.3 0 2.3 1 2.3 2.3v12.8c0 1.3-1 2.3-2.3 2.3h-5.1A2.3 2.3 0 0 1 8 36.8V24Z"/>
+      <path className="chair-fill" d="M30.3 24c0-1.3 1-2.3 2.3-2.3h5.1c1.3 0 2.3 1 2.3 2.3v12.8c0 1.3-1 2.3-2.3 2.3h-5.1c-1.3 0-2.3-1-2.3-2.3V24Z"/>
+      <path className="chair-fill" d="M16 30c0-1.6 1.3-2.9 2.9-2.9h10.2c1.6 0 2.9 1.3 2.9 2.9v3H16v-3Z"/>
+      <rect className="chair-fill" x="18.2" y="34.8" width="11.6" height="4.5" rx="1.5"/>
+      <path className="chair-fill" d="M20 41h8v3h-8z"/>
+      <path className="chair-fill" d="M14 38h20v3H14z"/>
+      <path className="scissor-stroke" d="m15 10 18 18"/>
+      <path className="scissor-stroke" d="m33 10-18 18"/>
+      <circle className="scissor-stroke" cx="15" cy="28" r="3.3"/>
+      <circle className="scissor-stroke" cx="33" cy="28" r="3.3"/>
     </svg>
   </span>;
 }

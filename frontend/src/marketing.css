@@ -53,17 +53,32 @@
 }
 
 .brand-symbol svg {
-  width: 27px;
-  height: 27px;
+  width: 29px;
+  height: 29px;
+}
+
+.brand-symbol .chair-fill {
+  fill: currentColor;
+}
+
+.brand-symbol .scissor-stroke {
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 3;
+  stroke-width: 3.2;
 }
 
 .marketing-brand strong {
   font: 800 15px/1 "Sora", sans-serif;
+}
+
+.marketing-brand strong span:first-child {
+  color: var(--gold);
+}
+
+.marketing-brand strong span:last-child {
+  color: var(--emerald);
 }
 
 .marketing-nav nav {
