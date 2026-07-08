@@ -1,6 +1,5 @@
 import {
   ArrowRight,
-  Armchair,
   BarChart3,
   CalendarDays,
   CheckCircle2,
@@ -32,7 +31,22 @@ function Brand() {
 }
 
 function BrandMark() {
-  return <span className="brand-symbol" aria-hidden="true"><Armchair/><Scissors/></span>;
+  return <span className="brand-symbol" aria-hidden="true">
+    <svg viewBox="0 0 48 48" role="img">
+      <path d="M16 29h16"/>
+      <path d="M15 19v15"/>
+      <path d="M33 19v15"/>
+      <path d="M18 34h12"/>
+      <path d="M20 22h8c3 0 5 2 5 5v2H15v-2c0-3 2-5 5-5Z"/>
+      <path d="M18 38h12"/>
+      <path d="M20 29v9"/>
+      <path d="M28 29v9"/>
+      <path d="m18 10 12 12"/>
+      <path d="m30 10-12 12"/>
+      <circle cx="16" cy="8" r="3"/>
+      <circle cx="32" cy="8" r="3"/>
+    </svg>
+  </span>;
 }
 
 export function LandingPage() {
