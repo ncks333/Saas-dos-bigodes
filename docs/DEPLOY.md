@@ -70,13 +70,71 @@ O serviço API executa migrations antes do deploy e só recebe tráfego quando `
 
 ## 5. WhatsApp e e-mail
 
-Configure uma instância Evolution API v2 e, para uso comercial, vincule-a ao WhatsApp Business oficial. Cadastre na Railway:
+### Evolution API v2 por Baileys
+
+Crie um serviço Railway separado com a imagem estável
+`evoapicloud/evolution-api:v2.3.7`. Não use a tag `latest`. Conecte PostgreSQL
+e Redis dedicados, ou bancos logicamente isolados, e configure no serviço
+Evolution:
 
 ```text
-WHATSAPP_BASE_URL=https://sua-evolution.example.com
-WHATSAPP_API_KEY=...
+SERVER_URL=https://evolution.seudominio.com
+AUTHENTICATION_API_KEY=gere-com-openssl-rand-hex-32
+DATABASE_ENABLED=true
+DATABASE_PROVIDER=postgresql
+DATABASE_CONNECTION_URI=postgresql://usuario:senha@host:5432/evolution
+DATABASE_CONNECTION_CLIENT_NAME=barberhub_evolution
+CACHE_REDIS_ENABLED=true
+CACHE_REDIS_URI=redis://default:senha@host:6379/0
+CACHE_REDIS_PREFIX_KEY=barberhub_evolution
+CACHE_REDIS_SAVE_INSTANCES=false
+CACHE_LOCAL_ENABLED=false
+```
+
+Gere domínio público HTTPS para a porta `8080`. Com o deploy saudável, exporte
+a URL pública e leia a chave sem gravá-la no histórico do shell:
+
+```bash
+export EVOLUTION_URL=https://evolution.seudominio.com
+read -rsp "Evolution API key: " EVOLUTION_API_KEY
+```
+
+Crie a instância Baileys:
+
+```bash
+curl -fsS -X POST "$EVOLUTION_URL/instance/create" \
+  -H "Content-Type: application/json" \
+  -H "apikey: $EVOLUTION_API_KEY" \
+  -d '{"instanceName":"barberhub","integration":"WHATSAPP-BAILEYS","qrcode":true}'
+```
+
+Obtenha o QR Code:
+
+```bash
+curl -fsS "$EVOLUTION_URL/instance/connect/barberhub" \
+  -H "apikey: $EVOLUTION_API_KEY"
+```
+
+No WhatsApp Business do celular, abra **Dispositivos conectados → Conectar
+dispositivo** e leia o QR Code. Conecte somente o número dedicado ao BarberHub.
+Confirme estado `open`:
+
+```bash
+curl -fsS "$EVOLUTION_URL/instance/connectionState/barberhub" \
+  -H "apikey: $EVOLUTION_API_KEY"
+```
+
+Cadastre a mesma URL, chave e instância nos serviços Railway da API, worker e
+beat:
+
+```text
+WHATSAPP_BASE_URL=https://evolution.seudominio.com
+WHATSAPP_API_KEY=mesma-chave-de-AUTHENTICATION_API_KEY
 WHATSAPP_INSTANCE_NAME=barberhub
 ```
+
+Se a sessão cair, repita os comandos de conexão e estado. Nunca registre chave,
+QR Code, telefone ou URLs com senha em logs, issues ou Git.
 
 Para e-mail transacional em Railway Free, Trial ou Hobby, use a API HTTPS do Resend; SMTP de saída é bloqueado nesses planos. Verifique um subdomínio de envio, crie uma chave restrita e cadastre:
 
