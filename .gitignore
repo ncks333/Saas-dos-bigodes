@@ -125,3 +125,4 @@ frontend/dist/
 /site
 .vercel/
 .env.local
+.worktrees/
