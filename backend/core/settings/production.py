@@ -1,4 +1,7 @@
 import os
+
+# ruff: noqa: F405
+
 from .base import *  # noqa: F403
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://mr-barberhub.vercel.app")
@@ -17,8 +20,11 @@ if EMAIL_BACKEND == "core.email_backends.ResendEmailBackend" and not RESEND_API_
     raise RuntimeError("RESEND_API_KEY deve ser configurada para o backend Resend")
 if not FRONTEND_URL.startswith("https://"):  # noqa: F405
     raise RuntimeError("FRONTEND_URL deve usar HTTPS em produção")
-if not all((WHATSAPP_BASE_URL, WHATSAPP_API_KEY, WHATSAPP_INSTANCE_NAME)):  # noqa: F405
-    raise RuntimeError("Configure URL, chave e instância do provedor de WhatsApp")
+if not all((
+    WHATSAPP_GRAPH_API_VERSION, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_ACCESS_TOKEN,
+    WHATSAPP_TEMPLATE_LANGUAGE, WHATSAPP_CONFIRMATION_TEMPLATE, WHATSAPP_REMINDER_TEMPLATE,
+)):  # noqa: F405
+    raise RuntimeError("Configure token, número e templates do WhatsApp Cloud API")
 
 MIDDLEWARE.insert(1, "whitenoise.middleware.WhiteNoiseMiddleware")  # noqa: F405
 
