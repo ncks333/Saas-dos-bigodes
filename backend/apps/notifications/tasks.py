@@ -4,6 +4,8 @@ from zoneinfo import ZoneInfo
 import requests
 from celery import shared_task
 from django.conf import settings
+from django.db import DatabaseError
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.appointments.models import Appointment
@@ -18,6 +20,10 @@ RETRYABLE_HTTP_STATUSES = {408, 429}
 
 
 class RetryableWhatsAppDeliveryError(Exception):
+    pass
+
+
+class RetryableWhatsAppDatabaseError(Exception):
     pass
 
 
@@ -59,11 +65,7 @@ def _safe_error_metadata(exc: Exception) -> dict:
         if isinstance(body, dict):
             meta_error = body.get("error")
             meta_code = meta_error.get("code") if isinstance(meta_error, dict) else None
-            if (
-                isinstance(meta_code, (int, str))
-                and not isinstance(meta_code, bool)
-                and len(str(meta_code)) <= 50
-            ):
+            if type(meta_code) is int:
                 error["meta_code"] = meta_code
     return {"error": error}
 
@@ -103,13 +105,28 @@ def _is_retryable_http_error(exc: requests.HTTPError) -> bool:
     )
 
 
+def _retry_database_failure(task):
+    raise task.retry(
+        exc=RetryableWhatsAppDatabaseError(
+            "Retryable database failure before WhatsApp delivery"
+        ),
+        countdown=min(2 ** task.request.retries, 60),
+        max_retries=task.max_retries,
+    )
+
+
 def _deliver_notification(
     task,
     log: NotificationLog,
     template_name: str,
     parameters: list[str],
 ) -> None:
-    if not _claim_notification(log.id):
+    try:
+        claimed = _claim_notification(log.id)
+    except DatabaseError:
+        _retry_database_failure(task)
+        return
+    if not claimed:
         return
 
     try:
@@ -146,17 +163,21 @@ def _deliver_notification(
 
 @shared_task(bind=True, max_retries=5)
 def send_appointment_confirmation(self, appointment_id: int):
-    appointment = Appointment.objects.select_related(
-        "customer",
-        "service",
-        "barbershop",
-    ).get(pk=appointment_id)
-    log, _ = NotificationLog.objects.get_or_create(
-        barbershop=appointment.barbershop,
-        appointment=appointment,
-        kind="CONFIRMATION",
-        defaults={"recipient": appointment.customer.whatsapp},
-    )
+    try:
+        appointment = Appointment.objects.select_related(
+            "customer",
+            "service",
+            "barbershop",
+        ).get(pk=appointment_id)
+        log, _ = NotificationLog.objects.get_or_create(
+            barbershop=appointment.barbershop,
+            appointment=appointment,
+            kind="CONFIRMATION",
+            defaults={"recipient": appointment.customer.whatsapp},
+        )
+    except DatabaseError:
+        _retry_database_failure(self)
+        return
     _deliver_notification(
         self,
         log,
@@ -170,7 +191,10 @@ def enqueue_due_reminders():
     now = timezone.now()
     lookback = timedelta(minutes=settings.WHATSAPP_REMINDER_LOOKBACK_MINUTES)
     for hours in REMINDER_HOURS:
-        appointments = Appointment.objects.select_related("customer").filter(
+        appointments = Appointment.objects.select_related(
+            "customer",
+            "barbershop",
+        ).filter(
             status__in=ACTIVE_REMINDER_STATUSES,
             starts_at__gt=now,
             starts_at__gte=now + timedelta(hours=hours) - lookback,
@@ -178,18 +202,33 @@ def enqueue_due_reminders():
         )
         kind = f"REMINDER_{hours}H"
         for appointment in appointments:
-            log, _ = NotificationLog.objects.get_or_create(
+            NotificationLog.objects.get_or_create(
                 barbershop=appointment.barbershop,
                 appointment=appointment,
                 kind=kind,
                 defaults={"recipient": appointment.customer.whatsapp},
             )
-            if log.status == "PENDING":
-                send_appointment_reminder.delay(
-                    appointment.id,
-                    hours,
-                    _starts_at_snapshot(appointment.starts_at),
-                )
+
+    due_pending_logs = NotificationLog.objects.select_related("appointment").filter(
+        Q(
+            kind="REMINDER_24H",
+            appointment__starts_at__lte=now + timedelta(hours=24),
+        )
+        | Q(
+            kind="REMINDER_1H",
+            appointment__starts_at__lte=now + timedelta(hours=1),
+        ),
+        status="PENDING",
+        appointment__status__in=ACTIVE_REMINDER_STATUSES,
+        appointment__starts_at__gt=now,
+    )
+    for log in due_pending_logs:
+        hours = 24 if log.kind == "REMINDER_24H" else 1
+        send_appointment_reminder.delay(
+            log.appointment_id,
+            hours,
+            _starts_at_snapshot(log.appointment.starts_at),
+        )
 
 
 @shared_task(bind=True, max_retries=5)
@@ -203,11 +242,15 @@ def send_appointment_reminder(
         raise ValueError("Reminder hours must be 1 or 24")
 
     kind = f"REMINDER_{hours}H"
-    appointment = Appointment.objects.select_related(
-        "customer",
-        "service",
-        "barbershop",
-    ).get(pk=appointment_id)
+    try:
+        appointment = Appointment.objects.select_related(
+            "customer",
+            "service",
+            "barbershop",
+        ).get(pk=appointment_id)
+    except DatabaseError:
+        _retry_database_failure(self)
+        return
     if (
         appointment.status not in ACTIVE_REMINDER_STATUSES
         or _starts_at_snapshot(appointment.starts_at) != starts_at_snapshot
@@ -219,12 +262,16 @@ def send_appointment_reminder(
         ).delete()
         return
 
-    log, _ = NotificationLog.objects.get_or_create(
-        barbershop=appointment.barbershop,
-        appointment=appointment,
-        kind=kind,
-        defaults={"recipient": appointment.customer.whatsapp},
-    )
+    try:
+        log, _ = NotificationLog.objects.get_or_create(
+            barbershop=appointment.barbershop,
+            appointment=appointment,
+            kind=kind,
+            defaults={"recipient": appointment.customer.whatsapp},
+        )
+    except DatabaseError:
+        _retry_database_failure(self)
+        return
     _deliver_notification(
         self,
         log,

@@ -95,3 +95,30 @@
 - [ ] **Step 4: Run:** `cd backend && python manage.py makemigrations --check --dry-run`.
 - [ ] **Step 5: Review status/diff for scope and sensitive values.**
 - [ ] **Step 6: Commit once:** `git commit -m "fix: harden WhatsApp notification delivery"`.
+
+### Task 6: Final review follow-up
+
+**Files:**
+- Modify: `backend/core/utils/phones.py`
+- Modify: `backend/apps/customers/serializers.py`
+- Modify: `backend/apps/appointments/views.py`
+- Modify: `backend/apps/notifications/tasks.py`
+- Modify: `backend/tests/test_whatsapp_phone_numbers.py`
+- Modify: `backend/tests/test_notifications.py`
+- Modify: `docs/DEPLOY.md`
+- Modify: active Meta WhatsApp design/plan documents containing deployment identifiers
+
+**Interfaces:**
+- Phone lookup candidates: canonical `55...` plus local legacy value without country code.
+- Pre-POST DB retry: bounded `self.retry` with generic exception and exponential countdown.
+- Durable reminder drain: pending reminder logs queried independently from appointment materialization window.
+
+- [ ] **Step 1: Add RED tests** for tenant-scoped serializer collision with a legacy local row and public booking reuse/canonicalization of that exact row.
+- [ ] **Step 2: Add RED tests** for `OperationalError` during appointment lookup, notification `get_or_create`, and atomic claim; assert no provider POST and sanitized bounded retry.
+- [ ] **Step 3: Add RED test** where first scheduler dispatch fails after log creation, clock advances beyond the materialization window, and second run dispatches the existing `PENDING` log.
+- [ ] **Step 4: Add RED test** proving string/bool Meta error codes are omitted and sensitive string content is absent from persisted metadata.
+- [ ] **Step 5: Run focused RED:** `cd backend && pytest tests/test_whatsapp_phone_numbers.py tests/test_notifications.py -q --no-cov`.
+- [ ] **Step 6: Implement minimal compatibility lookup, transactional public canonicalization, pre-POST DB retry helper, two-phase reminder scheduler, and integer-only Meta code extraction.**
+- [ ] **Step 7: Replace deployment identifiers with placeholders and remove claims tying identifiers to real accounts.**
+- [ ] **Step 8: Run focused GREEN, complete suite, Ruff, Django check, and `makemigrations --check --dry-run`.**
+- [ ] **Step 9: Commit once:** `git commit -m "fix: close WhatsApp delivery review findings"`.

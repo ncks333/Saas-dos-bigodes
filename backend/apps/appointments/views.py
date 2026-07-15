@@ -1,4 +1,5 @@
-from django.db.models import Count, Q, Sum
+from django.db import IntegrityError, transaction
+from django.db.models import Case, Count, IntegerField, Q, Sum, Value, When
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
@@ -15,12 +16,61 @@ from apps.customers.models import Customer
 from apps.notifications.tasks import send_appointment_confirmation
 from apps.services.models import Service
 from core.security.turnstile import verify_turnstile
+from core.utils.phones import brazilian_whatsapp_lookup_values
 from core.utils.viewsets import TenantViewSetMixin
 from .models import Appointment, ScheduleBlock
 from .schemas import AvailabilityQuery, PublicBookingInput
 from .serializers import AppointmentSerializer, ScheduleBlockSerializer
 from .services import available_slots, cancel_with_token, create_appointment, update_appointment
 from .throttles import CancellationThrottle, PublicBookingThrottle
+
+
+def _get_or_create_public_customer(*, barbershop, name: str, whatsapp: str):
+    canonical, legacy_local = brazilian_whatsapp_lookup_values(whatsapp)
+    with transaction.atomic():
+        customer = (
+            Customer.objects.select_for_update()
+            .filter(
+                barbershop=barbershop,
+                whatsapp__in=(canonical, legacy_local),
+            )
+            .order_by(
+                Case(
+                    When(whatsapp=canonical, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                ),
+                "pk",
+            )
+            .first()
+        )
+        if customer is not None:
+            if customer.whatsapp != canonical:
+                try:
+                    with transaction.atomic():
+                        customer.whatsapp = canonical
+                        customer.save(update_fields=["whatsapp", "updated_at"])
+                except IntegrityError:
+                    customer = Customer.objects.select_for_update().get(
+                        barbershop=barbershop,
+                        whatsapp=canonical,
+                    )
+            return customer, False
+
+        try:
+            with transaction.atomic():
+                customer = Customer.objects.create(
+                    barbershop=barbershop,
+                    whatsapp=canonical,
+                    name=name,
+                )
+        except IntegrityError:
+            customer = Customer.objects.select_for_update().get(
+                barbershop=barbershop,
+                whatsapp=canonical,
+            )
+            return customer, False
+        return customer, True
 
 
 class AppointmentViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
@@ -119,7 +169,11 @@ class PublicBookingView(APIView):
         barbershop = Barbershop.objects.filter(slug=slug, active=True).first()
         if not barbershop:
             raise serializers.ValidationError("Barbearia inválida.")
-        customer, _ = Customer.objects.get_or_create(barbershop=barbershop, whatsapp=payload.whatsapp, defaults={"name": payload.name})
+        customer, _ = _get_or_create_public_customer(
+            barbershop=barbershop,
+            name=payload.name,
+            whatsapp=payload.whatsapp,
+        )
         if not customer.active:
             customer.active = True
             customer.name = payload.name

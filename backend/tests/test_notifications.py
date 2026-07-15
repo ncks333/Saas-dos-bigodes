@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import pytest
 import requests
 from celery.exceptions import Retry
-from django.db import DatabaseError
+from django.db import DatabaseError, OperationalError
 from django.db.models.query import QuerySet
 from django.test import override_settings
 from django.utils import timezone
@@ -354,6 +354,8 @@ def test_persistence_failure_after_acceptance_keeps_sending_and_prevents_second_
     starts_at = datetime(2026, 7, 16, 14, 0, tzinfo=ZoneInfo("America/Sao_Paulo"))
     appointment = make_appointment(barbershop, starts_at)
     send_template = Mock(return_value={"messages": [{"id": "wamid.accepted"}]})
+    retry = Mock()
+    monkeypatch.setattr(send_appointment_confirmation, "retry", retry)
     monkeypatch.setattr("apps.notifications.tasks.WhatsAppProvider.send_template", send_template)
     original_update = QuerySet.update
 
@@ -370,6 +372,81 @@ def test_persistence_failure_after_acceptance_keeps_sending_and_prevents_second_
     log = NotificationLog.objects.get(appointment=appointment, kind="CONFIRMATION")
     assert log.status == "SENDING"
     send_template.assert_called_once()
+    retry.assert_not_called()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("failure_point", ["appointment_get", "log_get_or_create", "claim"])
+@override_settings(WHATSAPP_CONFIRMATION_TEMPLATE="barberhub_agendamento_recebido")
+def test_database_failure_before_post_uses_bounded_retry(
+    monkeypatch,
+    barbershop,
+    failure_point,
+):
+    starts_at = datetime(2026, 7, 16, 14, 0, tzinfo=ZoneInfo("America/Sao_Paulo"))
+    appointment = make_appointment(barbershop, starts_at)
+    database_error = OperationalError("sensitive database material")
+    original_get = QuerySet.get
+    original_get_or_create = QuerySet.get_or_create
+
+    def maybe_fail_get(queryset, *args, **kwargs):
+        if failure_point == "appointment_get" and queryset.model is Appointment:
+            raise database_error
+        return original_get(queryset, *args, **kwargs)
+
+    def maybe_fail_get_or_create(queryset, *args, **kwargs):
+        if failure_point == "log_get_or_create" and queryset.model is NotificationLog:
+            raise database_error
+        return original_get_or_create(queryset, *args, **kwargs)
+
+    if failure_point == "appointment_get":
+        monkeypatch.setattr(QuerySet, "get", maybe_fail_get)
+    elif failure_point == "log_get_or_create":
+        monkeypatch.setattr(QuerySet, "get_or_create", maybe_fail_get_or_create)
+    else:
+        monkeypatch.setattr(
+            "apps.notifications.tasks._claim_notification",
+            Mock(side_effect=database_error),
+        )
+
+    retry = Mock(side_effect=Retry())
+    send_template = Mock()
+    monkeypatch.setattr(send_appointment_confirmation, "retry", retry)
+    monkeypatch.setattr("apps.notifications.tasks.WhatsAppProvider.send_template", send_template)
+
+    with pytest.raises(Retry):
+        send_appointment_confirmation.run(appointment.id)
+
+    send_template.assert_not_called()
+    retry.assert_called_once()
+    assert retry.call_args.kwargs["max_retries"] == 5
+    assert retry.call_args.kwargs["countdown"] == 1
+    assert "sensitive database material" not in str(retry.call_args.kwargs["exc"])
+
+
+@pytest.mark.django_db
+@override_settings(WHATSAPP_REMINDER_TEMPLATE="barberhub_lembrete_agendamento")
+def test_reminder_database_lookup_failure_retries_before_post(monkeypatch, barbershop):
+    starts_at = datetime(2026, 7, 16, 14, 0, tzinfo=ZoneInfo("America/Sao_Paulo"))
+    appointment = make_appointment(barbershop, starts_at)
+    original_get = QuerySet.get
+
+    def fail_appointment_get(queryset, *args, **kwargs):
+        if queryset.model is Appointment:
+            raise OperationalError("sensitive database material")
+        return original_get(queryset, *args, **kwargs)
+
+    retry = Mock(side_effect=Retry())
+    send_template = Mock()
+    monkeypatch.setattr(QuerySet, "get", fail_appointment_get)
+    monkeypatch.setattr(send_appointment_reminder, "retry", retry)
+    monkeypatch.setattr("apps.notifications.tasks.WhatsAppProvider.send_template", send_template)
+
+    with pytest.raises(Retry):
+        send_appointment_reminder.run(appointment.id, 24, snapshot(appointment))
+
+    send_template.assert_not_called()
+    retry.assert_called_once()
 
 
 @pytest.mark.django_db
@@ -496,6 +573,36 @@ def test_scheduler_reenqueues_preexisting_pending_log(monkeypatch, barbershop):
 
 
 @pytest.mark.django_db
+@override_settings(WHATSAPP_REMINDER_LOOKBACK_MINUTES=5)
+def test_scheduler_recovers_pending_log_after_materialization_window(
+    monkeypatch,
+    barbershop,
+):
+    current_time = [
+        datetime(2026, 7, 15, 14, 0, tzinfo=ZoneInfo("America/Sao_Paulo"))
+    ]
+    appointment = make_appointment(barbershop, current_time[0] + timedelta(hours=24))
+    delay = Mock(side_effect=[RuntimeError("broker unavailable"), None])
+    monkeypatch.setattr(timezone, "now", lambda: current_time[0])
+    monkeypatch.setattr("apps.notifications.tasks.send_appointment_reminder.delay", delay)
+
+    with pytest.raises(RuntimeError, match="broker unavailable"):
+        enqueue_due_reminders.run()
+
+    assert NotificationLog.objects.filter(
+        appointment=appointment,
+        kind="REMINDER_24H",
+        status="PENDING",
+    ).exists()
+
+    current_time[0] += timedelta(minutes=10)
+    enqueue_due_reminders.run()
+
+    assert delay.call_count == 2
+    assert delay.call_args.args == (appointment.id, 24, snapshot(appointment))
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize("status", ["SENT", "SENDING", "UNKNOWN", "FAILED"])
 @override_settings(WHATSAPP_REMINDER_LOOKBACK_MINUTES=60)
 def test_scheduler_does_not_reenqueue_non_pending_log(monkeypatch, barbershop, status):
@@ -540,3 +647,32 @@ def test_duplicate_reminder_jobs_with_pending_log_post_once(monkeypatch, barbers
         appointment=appointment,
         kind="REMINDER_24H",
     ).status == "SENT"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "meta_code",
+    ["sensitive-recipient-payload-material", True],
+)
+@override_settings(WHATSAPP_CONFIRMATION_TEMPLATE="barberhub_agendamento_recebido")
+def test_non_integer_meta_error_code_is_omitted(monkeypatch, barbershop, meta_code):
+    starts_at = datetime(2026, 7, 16, 14, 0, tzinfo=ZoneInfo("America/Sao_Paulo"))
+    appointment = make_appointment(barbershop, starts_at)
+    response = Mock(status_code=400)
+    response.json.return_value = {"error": {"code": meta_code}}
+    http_error = requests.HTTPError("generic terminal error", response=response)
+    monkeypatch.setattr(
+        "apps.notifications.tasks.WhatsAppProvider.send_template",
+        Mock(side_effect=http_error),
+    )
+
+    send_appointment_confirmation.run(appointment.id)
+
+    log = NotificationLog.objects.get(appointment=appointment, kind="CONFIRMATION")
+    assert log.status == "FAILED"
+    assert log.provider_response == {
+        "error": {"class": "HTTPError", "http_status": 400}
+    }
+    assert "sensitive-recipient-payload-material" not in json.dumps(
+        log.provider_response
+    )

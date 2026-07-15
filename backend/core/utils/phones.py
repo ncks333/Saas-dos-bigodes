@@ -22,3 +22,8 @@ def normalize_brazilian_whatsapp(value: str) -> str:
     if len(digits) in (12, 13) and digits.startswith("55"):
         return digits
     raise ValueError("WhatsApp inválido")
+
+
+def brazilian_whatsapp_lookup_values(value: str) -> tuple[str, str]:
+    canonical = normalize_brazilian_whatsapp(value)
+    return canonical, canonical[2:]

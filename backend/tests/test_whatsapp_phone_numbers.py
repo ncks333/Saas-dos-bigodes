@@ -1,10 +1,14 @@
-from datetime import datetime
+from datetime import datetime, timedelta
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import ValidationError
 
+from apps.appointments.models import Appointment
 from apps.appointments.schemas import PublicBookingInput
+from apps.customers.models import Customer
+from apps.services.models import Service
 
 
 def booking_payload(whatsapp: str) -> dict:
@@ -59,3 +63,72 @@ def test_customer_serializer_rejects_invalid_whatsapp(api_client):
 
     assert response.status_code == 400
     assert "whatsapp" in response.data["error"]["details"]
+
+
+@pytest.mark.django_db
+def test_customer_serializer_rejects_canonical_duplicate_of_legacy_local_row(
+    api_client,
+    barbershop,
+):
+    legacy = Customer.objects.create(
+        barbershop=barbershop,
+        name="Cliente Legado",
+        whatsapp="11999999999",
+    )
+
+    response = api_client.post(
+        "/api/v1/customers/",
+        {"name": "Cliente Duplicado", "whatsapp": "+55 (11) 99999-9999"},
+    )
+
+    assert response.status_code == 400
+    assert Customer.objects.filter(barbershop=barbershop).count() == 1
+    assert Customer.objects.get(pk=legacy.pk).whatsapp == "11999999999"
+
+
+@pytest.mark.django_db
+def test_public_booking_reuses_and_canonicalizes_legacy_local_customer(
+    client,
+    barbershop,
+    monkeypatch,
+):
+    legacy = Customer.objects.create(
+        barbershop=barbershop,
+        name="Cliente Legado",
+        whatsapp="11977777777",
+    )
+    service = Service.objects.create(
+        barbershop=barbershop,
+        name="Corte Legado",
+        price=Decimal("50.00"),
+        duration_minutes=30,
+    )
+    starts_at = (
+        datetime.now(ZoneInfo(barbershop.timezone))
+        .replace(hour=10, minute=0, second=0, microsecond=0)
+        + timedelta(days=14)
+    )
+    monkeypatch.setattr("apps.appointments.views.verify_turnstile", lambda *_args: True)
+    monkeypatch.setattr(
+        "apps.appointments.views.send_appointment_confirmation.delay",
+        lambda _appointment_id: None,
+    )
+
+    response = client.post(
+        "/api/v1/public/bigodes/book/",
+        {
+            "name": "Cliente Legado Atualizado",
+            "whatsapp": "+55 (11) 97777-7777",
+            "service_id": service.id,
+            "starts_at": starts_at.isoformat(),
+            "captcha_token": "test",
+            "privacy_notice_accepted": True,
+        },
+        content_type="application/json",
+    )
+
+    assert response.status_code == 201
+    legacy.refresh_from_db()
+    assert legacy.whatsapp == "5511977777777"
+    assert Customer.objects.filter(barbershop=barbershop).count() == 1
+    assert Appointment.objects.get(pk=response.data["id"]).customer_id == legacy.id

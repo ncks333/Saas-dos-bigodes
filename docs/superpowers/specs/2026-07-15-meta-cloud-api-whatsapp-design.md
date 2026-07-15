@@ -5,7 +5,7 @@
 
 ## Contexto
 
-O BarberHub já possui confirmações e lembretes assíncronos via Celery, registro idempotente em `NotificationLog` e API pública em produção na Railway. A Evolution API foi retirada da infraestrutura após banimento durante os testes. O próximo provedor será a WhatsApp Cloud API oficial da Meta, usando a conta `MR BarberHub` e o número já conectado ao portfólio M&R Solutions.
+O BarberHub já possui confirmações e lembretes assíncronos via Celery, registro idempotente em `NotificationLog` e API pública em produção na Railway. A Evolution API foi retirada da infraestrutura após banimento durante os testes. O próximo provedor será a WhatsApp Cloud API oficial da Meta, usando WABA e número dedicado configurados somente no ambiente de deploy.
 
 O código atual ainda contém o adapter da Evolution (`WHATSAPP_BASE_URL`, `WHATSAPP_API_KEY`, `WHATSAPP_INSTANCE_NAME` e `/message/sendText/{instance}`). A mudança deve substituir somente esse contrato, preservando o fluxo de agenda e a infraestrutura Railway existente.
 
@@ -91,9 +91,9 @@ Substituir as variáveis Evolution por:
 
 ```text
 WHATSAPP_GRAPH_API_VERSION=<versão Graph validada no deploy>
-WHATSAPP_PHONE_NUMBER_ID=<phone number ID do número MR BarberHub>
+WHATSAPP_PHONE_NUMBER_ID=<phone number ID do ambiente>
 WHATSAPP_ACCESS_TOKEN=<token do usuário do sistema, secreto>
-WHATSAPP_WABA_ID=<ID da conta MR BarberHub, para rastreabilidade operacional>
+WHATSAPP_WABA_ID=<WABA ID do ambiente, para rastreabilidade operacional>
 WHATSAPP_TEMPLATE_LANGUAGE=pt_BR
 WHATSAPP_CONFIRMATION_TEMPLATE=barberhub_agendamento_recebido
 WHATSAPP_REMINDER_TEMPLATE=barberhub_lembrete_agendamento
@@ -112,7 +112,7 @@ WHATSAPP_REMINDER_TEMPLATE=barberhub_lembrete_agendamento
 
 ## Segurança e operação
 
-- Usar somente número dedicado já conectado à WABA `MR BarberHub`.
+- Usar somente número dedicado conectado à WABA aprovada para o ambiente.
 - Não usar número pessoal da M&R Solutions.
 - Aplicação e usuário do sistema recebem apenas ativos necessários; token deve ser revogado e recriado se exposto.
 - Enviar somente mensagens transacionais ligadas a agendamento autorizado.

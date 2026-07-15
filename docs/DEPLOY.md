@@ -71,8 +71,9 @@ O serviço API executa migrations antes do deploy e só recebe tráfego quando `
 
 ### Meta WhatsApp Cloud API
 
-Use somente a API oficial da Meta. A conta `MR BarberHub`, o número dedicado e
-o app `M&R Barberhub Notificações` devem pertencer ao portfólio M&R Solutions.
+Use somente a API oficial da Meta. WABA, número dedicado e app devem pertencer
+ao portfólio empresarial aprovado para o ambiente, sem registrar IDs reais
+neste documento.
 
 No Meta Business Settings, crie um usuário do sistema dedicado, atribua somente
 o app e a conta WhatsApp usados pelo BarberHub e gere um token permanente com
@@ -92,18 +93,19 @@ Cadastre como variáveis compartilhadas nos serviços `barberhub-api` e
 
 ```text
 WHATSAPP_GRAPH_API_VERSION=v25.0
-WHATSAPP_PHONE_NUMBER_ID=123456789012345
+WHATSAPP_PHONE_NUMBER_ID=cole-o-phone-number-id
 WHATSAPP_ACCESS_TOKEN=defina-no-painel
-WHATSAPP_WABA_ID=997108009625516
+WHATSAPP_WABA_ID=cole-o-waba-id
 WHATSAPP_TEMPLATE_LANGUAGE=pt_BR
 WHATSAPP_CONFIRMATION_TEMPLATE=barberhub_agendamento_recebido
 WHATSAPP_REMINDER_TEMPLATE=barberhub_lembrete_agendamento
 WHATSAPP_REMINDER_LOOKBACK_MINUTES=60
 ```
 
-O ID numérico do telefone é exemplo e deve ser substituído pelo valor exibido
-em WhatsApp → API Setup. O `WHATSAPP_WABA_ID` acima pertence à conta já
-identificada `MR BarberHub`. Nunca use o texto de exemplo do token em produção.
+Substitua os placeholders pelos IDs exibidos em WhatsApp → API Setup e cadastre
+os valores reais somente como secrets/variáveis protegidas da Railway. Nunca
+registre vínculo entre IDs reais e contas, nem use texto de exemplo como token
+em produção.
 
 O sistema envia três notificações: recebimento imediato, lembrete 24 horas antes
 e lembrete 1 hora antes. Os dois lembretes reutilizam o mesmo template.
