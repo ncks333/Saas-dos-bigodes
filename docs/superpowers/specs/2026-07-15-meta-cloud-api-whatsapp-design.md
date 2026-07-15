@@ -1,7 +1,7 @@
 # Integração do BarberHub com WhatsApp Cloud API
 
 **Data:** 2026-07-15  
-**Status:** Desenho aprovado pelo usuário; aguardando revisão do documento antes da implementação.
+**Status:** Desenho e documento aprovados pelo usuário.
 
 ## Contexto
 
@@ -81,7 +81,7 @@ Antes do smoke test, criar e aprovar templates da categoria `UTILITY` no WhatsAp
 - `barberhub_agendamento_recebido`, idioma `pt_BR`: `Olá, {{1}}! Seu {{2}} foi registrado para {{3}}. A barbearia confirmará seu horário pelo WhatsApp.`
 - `barberhub_lembrete_agendamento`, idioma `pt_BR`: `Olá, {{1}}! Lembrete: seu {{2}} está marcado para {{3}}.`
 
-Os dois templates usam três parâmetros de corpo, nesta ordem: nome do cliente, nome do serviço e data/hora formatada no fuso da barbearia. Nomes reais podem ser ajustados no WhatsApp Manager, desde que os valores sejam cadastrados nas variáveis correspondentes da Railway.
+O sistema fará três disparos: confirmação imediata, lembrete 24 horas antes e lembrete 1 hora antes. O template de lembrete será reutilizado nos dois horários. Os dois templates usam três parâmetros de corpo, nesta ordem: nome do cliente, nome do serviço e data/hora formatada no fuso da barbearia. Nomes reais podem ser ajustados no WhatsApp Manager, desde que os valores sejam cadastrados nas variáveis correspondentes da Railway.
 
 O fluxo público continuará exibindo “Horário solicitado!” porque o registro nasce com status `AGUARDANDO_CONFIRMACAO`; a mensagem será de recebimento do pedido, não de confirmação definitiva. O lembrete só será enviado para os status já aceitos por `enqueue_due_reminders`.
 
