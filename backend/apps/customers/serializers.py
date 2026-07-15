@@ -1,5 +1,7 @@
-import re
 from rest_framework import serializers
+
+from core.utils.phones import normalize_brazilian_whatsapp
+
 from .models import Customer
 
 
@@ -10,14 +12,15 @@ class CustomerSerializer(serializers.ModelSerializer):
         read_only_fields = ["created_at", "updated_at"]
 
     def validate_whatsapp(self, value):
-        digits = re.sub(r"\D", "", value)
-        if not 10 <= len(digits) <= 15:
-            raise serializers.ValidationError("WhatsApp inválido.")
+        try:
+            normalized = normalize_brazilian_whatsapp(value)
+        except ValueError as exc:
+            raise serializers.ValidationError("WhatsApp inválido.") from exc
         request = self.context.get("request")
         tenant_id = getattr(getattr(request, "user", None), "barbershop_id", None)
-        existing = Customer.objects.filter(barbershop_id=tenant_id, whatsapp=digits)
+        existing = Customer.objects.filter(barbershop_id=tenant_id, whatsapp=normalized)
         if self.instance:
             existing = existing.exclude(pk=self.instance.pk)
         if existing.exists():
             raise serializers.ValidationError("WhatsApp já cadastrado nesta barbearia.")
-        return digits
+        return normalized

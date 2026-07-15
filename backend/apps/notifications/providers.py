@@ -1,9 +1,12 @@
 import requests
 from django.conf import settings
 
+from core.utils.phones import normalize_brazilian_whatsapp
+
 
 class WhatsAppProvider:
     def send_template(self, recipient: str, template_name: str, parameters: list[str]) -> dict:
+        normalized_recipient = normalize_brazilian_whatsapp(recipient)
         if not all((settings.WHATSAPP_PHONE_NUMBER_ID, settings.WHATSAPP_ACCESS_TOKEN)):
             if settings.DEBUG:
                 return {"simulated": True}
@@ -17,7 +20,7 @@ class WhatsAppProvider:
             json={
                 "messaging_product": "whatsapp",
                 "recipient_type": "individual",
-                "to": recipient,
+                "to": normalized_recipient,
                 "type": "template",
                 "template": {
                     "name": template_name,

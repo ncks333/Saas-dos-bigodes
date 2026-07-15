@@ -1,8 +1,9 @@
 from datetime import date, datetime
-import re
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
+
+from core.utils.phones import normalize_brazilian_whatsapp
 
 
 class AvailabilityQuery(BaseModel):
@@ -26,10 +27,7 @@ class PublicBookingInput(BaseModel):
     @field_validator("whatsapp")
     @classmethod
     def clean_whatsapp(cls, value: str) -> str:
-        digits = re.sub(r"\D", "", value)
-        if not 10 <= len(digits) <= 15:
-            raise ValueError("WhatsApp inválido")
-        return digits
+        return normalize_brazilian_whatsapp(value)
 
     @field_validator("starts_at")
     @classmethod

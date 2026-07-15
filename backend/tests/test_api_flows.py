@@ -30,7 +30,7 @@ def test_management_crud_and_settings(api_client, barbershop):
     )
     assert customer.status_code == 201
     customer_id = customer.data["id"]
-    assert customer.data["whatsapp"] == "11999999999"
+    assert customer.data["whatsapp"] == "5511999999999"
     assert api_client.post(
         "/api/v1/customers/", {"name": "Duplicado", "whatsapp": "11999999999"}
     ).status_code == 400

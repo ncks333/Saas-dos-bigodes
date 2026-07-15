@@ -74,10 +74,12 @@ O serviço API executa migrations antes do deploy e só recebe tráfego quando `
 Use somente a API oficial da Meta. A conta `MR BarberHub`, o número dedicado e
 o app `M&R Barberhub Notificações` devem pertencer ao portfólio M&R Solutions.
 
-No Meta Business Settings, crie um usuário do sistema com acesso total ao app e
-à conta WhatsApp. Gere token com validade controlada pela operação e permissões
-`whatsapp_business_management` e `whatsapp_business_messaging`. Cadastre o token
-somente como secret da Railway.
+No Meta Business Settings, crie um usuário do sistema dedicado, atribua somente
+o app e a conta WhatsApp usados pelo BarberHub e gere um token permanente com
+expiração `Never`/sem expiração. Selecione exatamente as permissões mínimas
+`whatsapp_business_management` e `whatsapp_business_messaging`, sem adicionar
+escopos de anúncios, páginas ou perfil. Cadastre o token somente como secret da
+Railway. Token sem expiração não elimina necessidade de rotação operacional.
 
 No WhatsApp Manager, crie e aguarde aprovação destes templates `UTILITY` em
 `pt_BR`:
@@ -96,6 +98,7 @@ WHATSAPP_WABA_ID=997108009625516
 WHATSAPP_TEMPLATE_LANGUAGE=pt_BR
 WHATSAPP_CONFIRMATION_TEMPLATE=barberhub_agendamento_recebido
 WHATSAPP_REMINDER_TEMPLATE=barberhub_lembrete_agendamento
+WHATSAPP_REMINDER_LOOKBACK_MINUTES=60
 ```
 
 O ID numérico do telefone é exemplo e deve ser substituído pelo valor exibido
@@ -104,6 +107,18 @@ identificada `MR BarberHub`. Nunca use o texto de exemplo do token em produção
 
 O sistema envia três notificações: recebimento imediato, lembrete 24 horas antes
 e lembrete 1 hora antes. Os dois lembretes reutilizam o mesmo template.
+`WHATSAPP_REMINDER_LOOKBACK_MINUTES` é opcional, usa default `60` e aceita de 1
+a 1440 minutos. A janela recupera execuções atrasadas, mas nunca seleciona
+agendamentos cujo horário já passou.
+
+Para rotacionar o token, gere outro token permanente para o mesmo usuário do
+sistema e as mesmas duas permissões, atualize o secret nos dois serviços,
+reinicie-os e valide um envio antes de revogar o token anterior. Faça rotação em
+cadência definida pela operação e imediatamente após suspeita de exposição,
+troca de responsável ou mudança de acesso. Para revogar, remova o token no
+usuário do sistema ou retire dele o app/ativo WhatsApp no Business Settings;
+depois remova o secret antigo da Railway. Nunca copie qualquer token para shell,
+issue, log ou documentação durante rotação e resposta a incidente.
 
 Somente depois de os templates estarem `APPROVED` e as variáveis existirem,
 implante `barberhub-api` e ative `barberhub-jobs`. O serviço jobs deve mostrar um
