@@ -153,6 +153,8 @@ VITE_POSTHOG_KEY=...              # opcional
 VITE_POSTHOG_HOST=https://us.i.posthog.com
 ```
 
+Cadastre também `VITE_MR_SOLUTIONS_WHATSAPP_URL` com a URL HTTPS pública `wa.me` aprovada. Esse valor real fica somente no painel da Vercel, em Production e Preview; não o copie para Docker, Compose, `.env`, documentação ou Git. O Compose local usa exclusivamente fixture fictícia de desenvolvimento.
+
 5. Vincule `app.seudominio.com`. Depois, atualize o widget Turnstile para aceitar somente esse hostname.
 
 O PostHog está configurado sem autocapture, gravação de sessão ou persistência em cookies/localStorage. Não envie nomes, telefones ou conteúdo de formulários como eventos.

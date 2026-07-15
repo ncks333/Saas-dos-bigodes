@@ -30,7 +30,13 @@ docker compose exec backend python manage.py seed_demo
 
 Abra `http://localhost:5173`. A seed cria `admin / Bigodes123`; troque essa senha imediatamente. A API fica em `http://localhost:8000/api/v1/` e o agendamento público de demonstração em `http://localhost:5173/agendar/bigodes`.
 
-Sem Docker, instale Python 3.13, PostgreSQL, Redis e Node 22; depois instale `backend/requirements/development.txt` e execute Vite no diretório `frontend`.
+Sem Docker, instale Python 3.13, PostgreSQL, Redis e Node 22; depois instale `backend/requirements/development.txt`. Para iniciar o frontend com configuração exclusivamente local:
+
+```bash
+cd frontend
+npm install
+VITE_API_URL=http://localhost:8000/api/v1 VITE_MR_SOLUTIONS_WHATSAPP_URL=https://wa.me/5511999999999?text=Teste npm run dev
+```
 
 ## Testes e qualidade
 
@@ -38,7 +44,7 @@ Sem Docker, instale Python 3.13, PostgreSQL, Redis e Node 22; depois instale `ba
 docker compose run --rm backend pytest
 docker compose run --rm backend ruff check .
 cd frontend
-VITE_API_URL=http://localhost:8000/api/v1 npm run build
+VITE_API_URL=http://localhost:8000/api/v1 VITE_MR_SOLUTIONS_WHATSAPP_URL=https://wa.me/5511999999999?text=Teste npm run build
 npm run test:e2e
 ```
 
@@ -46,7 +52,9 @@ O limite de cobertura está configurado em 80%. A suíte incluída estabelece a 
 
 ## Variáveis importantes
 
-Copie `.env.example`; nunca versione `.env`. Produção exige chaves independentes para Django e JWT, credenciais fortes, origens CORS/CSRF exatas, Turnstile, SMTP transacional e Evolution API v2 com uma instância configurada.
+Copie `.env.example`; nunca versione `.env`. Produção exige chaves independentes para Django e JWT, credenciais fortes, origens CORS/CSRF exatas, Turnstile, SMTP transacional e WhatsApp Cloud API oficial da Meta com uma integração configurada.
+
+O build do frontend também exige `VITE_MR_SOLUTIONS_WHATSAPP_URL`. O Compose usa apenas uma fixture fictícia para desenvolvimento local. Cadastre valor público real somente no painel da Vercel; nunca em `.env`, Docker, Compose, documentação ou Git.
 
 ## Estrutura
 
@@ -65,6 +73,6 @@ Consulte também [Agente de agendamento](docs/AGENT.md) para o prompt, as ferram
 
 ## Produção
 
-O Compose é voltado a desenvolvimento/homologação. A produção está preparada para Vercel, Railway, Supabase e Upstash. Siga o [guia completo de deploy](docs/DEPLOY.md) e a [lista de controles de segurança](docs/SECURITY.md). Credenciais reais, domínio, WhatsApp e SMTP ainda precisam ser cadastrados nos respectivos painéis antes da liberação.
+O Compose é voltado a desenvolvimento/homologação. A produção está preparada para Vercel, Railway, Supabase e Upstash. Siga o [guia completo de deploy](docs/DEPLOY.md) e a [lista de controles de segurança](docs/SECURITY.md). Credenciais reais, domínio, WhatsApp e SMTP ainda precisam ser cadastrados nos respectivos painéis antes da liberação. O valor real de `VITE_MR_SOLUTIONS_WHATSAPP_URL` fica somente no painel da Vercel.
 
 O antigo `main.py` foi preservado como protótipo didático; a aplicação comercial está em `backend/` e `frontend/`.
