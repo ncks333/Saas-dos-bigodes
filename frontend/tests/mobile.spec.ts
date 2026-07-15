@@ -65,6 +65,15 @@ test("landing da M&R Solutions apresenta serviços e contato pelo WhatsApp", asy
   await noHorizontalOverflow(page);
 });
 
+test("globo respeita preferência por movimento reduzido", async ({page}) => {
+  await page.emulateMedia({reducedMotion: "reduce"});
+  await page.goto("/mr-solutions");
+  const globe = page.locator(".mr-solutions-globe");
+  await expect(globe).toBeVisible();
+  await expect(globe).toHaveCSS("animation-name", "none");
+  await expect(page.locator(".mr-solutions-globe-star").first()).toHaveCSS("animation-name", "none");
+});
+
 test("recuperação de senha confirma pedido sem expor cadastro", async ({page}) => {
   await page.route("**/api/v1/auth/password-reset/", route => route.fulfill({json: {message: "Se o e-mail existir, as instruções serão enviadas."}}));
   await page.goto("/recuperar-senha");

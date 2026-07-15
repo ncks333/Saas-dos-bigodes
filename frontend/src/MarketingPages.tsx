@@ -71,9 +71,9 @@ function BrandMark() {
   return <span className="brand-symbol" aria-hidden="true"><img src="/barberhub-icon-v2.png" alt=""/></span>;
 }
 
-function SolutionsBrand({compact = false}: {compact?: boolean}) {
-  return <a className={compact ? "solutions-brand compact" : "solutions-brand"} href="/mr-solutions" aria-label="M&R Solutions — início">
-    <img src={compact ? "/mr-solutions-logo-icon.png" : "/mr-solutions-logo-compact-cutout.png"} alt="M&R Solutions"/>
+function SolutionsBrand() {
+  return <a className="solutions-brand" href="/mr-solutions" aria-label="M&R Solutions — início">
+    <img src="/mr-solutions-logo-compact-cutout.png" alt="M&R Solutions"/>
   </a>;
 }
 
