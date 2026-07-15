@@ -16,7 +16,7 @@ Nunca copie arquivos `.env` para o Git. Cadastre cada segredo diretamente no pai
 
 1. Registre o domínio na Namecheap.
 2. Adicione o domínio à Cloudflare e troque, na Namecheap, os nameservers pelos fornecidos pela Cloudflare.
-3. Reserve `app.seudominio.com` para a Vercel e `api.seudominio.com` para a Railway.
+3. Reserve `app.seudominio.com` para a Vercel e `api.mrbarberhub.com.br` para a Railway.
 4. Na Cloudflare Turnstile, crie um widget para `app.seudominio.com` e guarde a Site Key e a Secret Key.
 
 Use inicialmente os registros DNS indicados por Vercel e Railway como **DNS only**. Ative o proxy da Cloudflare somente depois que SSL e health checks estiverem aprovados.
@@ -59,9 +59,9 @@ openssl rand -base64 64
 Use uma em `DJANGO_SECRET_KEY` e outra em `JWT_SIGNING_KEY`. Configure ainda:
 
 ```text
-ALLOWED_HOSTS=api.seudominio.com,healthcheck.railway.app
+ALLOWED_HOSTS=api.mrbarberhub.com.br,healthcheck.railway.app
 CORS_ALLOWED_ORIGINS=https://app.seudominio.com
-CSRF_TRUSTED_ORIGINS=https://app.seudominio.com,https://api.seudominio.com
+CSRF_TRUSTED_ORIGINS=https://app.seudominio.com,https://api.mrbarberhub.com.br
 DJANGO_SETTINGS_MODULE=core.settings.production
 ```
 
@@ -130,7 +130,7 @@ Cadastre `RESEND_API_KEY` como secret diretamente no painel Railway. Defina `FRO
 4. Cadastre em Production e Preview:
 
 ```text
-VITE_API_URL=https://api.seudominio.com/api/v1
+VITE_API_URL=https://api.mrbarberhub.com.br/api/v1
 VITE_TURNSTILE_SITE_KEY=...
 VITE_POSTHOG_KEY=...              # opcional
 VITE_POSTHOG_HOST=https://us.i.posthog.com
@@ -156,7 +156,7 @@ Após o sucesso, remova imediatamente `INITIAL_ADMIN_PASSWORD` das variáveis Ra
 
 ## 8. Checklist de liberação
 
-- `https://api.seudominio.com/api/v1/health/` retorna `{"status":"ok"}`.
+- `https://api.mrbarberhub.com.br/api/v1/health/` retorna `{"status":"ok"}`.
 - Login administrativo funciona e a senha inicial foi trocada.
 - `https://app.seudominio.com/agendar/<slug>` lista serviços e horários.
 - Um agendamento de teste aparece no painel e não permite sobreposição.
