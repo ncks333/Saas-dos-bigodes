@@ -1,5 +1,4 @@
 import {lazy, Suspense} from "react";
-import DemoOne from "@/components/ui/demo";
 import {LandingPage, MRSolutionsPage, PrivacyPage} from "./MarketingPages";
 
 const AdminApp=lazy(()=>import("./ProductApp"));
@@ -14,7 +13,6 @@ export default function App(){
   const parts=path.split("/").filter(Boolean);
   let page;
   if(path==="/")page=<LandingPage/>;
-  else if(path==="/demo/globe")page=<DemoOne/>;
   else if(path==="/mr-solutions")page=<MRSolutionsPage/>;
   else if(path==="/login")page=<AdminApp/>;
   else if(path==="/privacidade")page=<PrivacyPage/>;

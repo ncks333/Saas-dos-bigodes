@@ -34,8 +34,34 @@ test("login traduz erro de credenciais inválidas", async ({page}) => {
 test("landing page apresenta produto e chamadas principais", async ({page}) => {
   await page.goto("/");
   await expect(page.getByRole("heading", {name: /Menos conversa perdida/})).toBeVisible();
-  await expect(page.getByRole("link", {name: /Ver agendamento/})).toBeVisible();
-  await expect(page.getByRole("link", {name: /Acessar painel/})).toBeVisible();
+  await expect(page.getByRole("link", {name: /Ver agendamento/}).first()).toBeVisible();
+  await expect(page.getByRole("link", {name: /Acessar painel/}).first()).toBeVisible();
+  await noHorizontalOverflow(page);
+});
+
+test("landing da M&R Solutions apresenta serviços e contato pelo WhatsApp", async ({page}) => {
+  await page.goto("/mr-solutions");
+  await expect(page.getByRole("heading", {name: /Sistemas, sites e automações/})).toBeVisible();
+  await expect(page.getByText("Sites", {exact: true})).toBeVisible();
+  await expect(page.getByText("Sistemas", {exact: true})).toBeVisible();
+  await expect(page.getByText("Consultoria digital", {exact: true}).first()).toBeVisible();
+  await expect(page.getByRole("heading", {name: "Sites e produtos digitais", exact: true})).toBeVisible();
+  await expect(page.getByRole("heading", {name: "Automações", exact: true})).toBeVisible();
+  await expect(page.getByRole("heading", {name: "Consultoria digital", exact: true})).toBeVisible();
+  await expect(page.getByRole("heading", {name: /BarberHub nasceu como produto próprio/})).toBeVisible();
+  await expect(page.getByRole("heading", {name: "Como começamos"})).toBeVisible();
+  await expect(page.getByText("Projetos selecionados em preparação").first()).toBeVisible();
+  await expect(page.locator(".solutions-orbit [style*='globe.jpeg']")).toBeVisible();
+  await expect(page.locator(".solutions-orbit [class*='d4af37']").first()).toBeVisible();
+  await expect(page.locator(".shooting-star")).toHaveCount(6);
+  await expect(page.locator(".solutions-reveal.is-visible").first()).toBeVisible();
+  await page.locator(".solutions-services").scrollIntoViewIfNeeded();
+  await expect(page.locator(".solutions-services.is-visible")).toBeVisible();
+  await page.locator(".solutions-case").scrollIntoViewIfNeeded();
+  await expect(page.locator(".solutions-case.is-visible")).toBeVisible();
+  await expect(page.locator(".solutions-nav.is-scrolled")).toBeVisible();
+  await expect(page.getByRole("link", {name: /Conversar sobre meu projeto/}).first())
+    .toHaveAttribute("href", /^https:\/\/wa\.me\/5511999999999\?text=Teste$/);
   await noHorizontalOverflow(page);
 });
 
