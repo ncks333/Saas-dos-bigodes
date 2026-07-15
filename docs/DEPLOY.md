@@ -5,7 +5,7 @@ Arquitetura preparada:
 ```text
 Namecheap → Cloudflare DNS
                  ├── app.seudominio.com → Vercel (React)
-                 └── api.seudominio.com → Railway (Django)
+                 └── api.mrbarberhub.com.br → Railway (Django)
                                                ├── Supabase PostgreSQL
                                                └── Upstash Redis → Celery Worker/Beat
 ```
@@ -27,7 +27,7 @@ Use inicialmente os registros DNS indicados por Vercel e Railway como **DNS only
 2. Em **Integrations → Data API**, desative **Enable Data API**. O frontend usa apenas a API Django; as tabelas internas não devem ganhar endpoints REST/GraphQL do Supabase.
 3. Em **Connect**, copie a URL do **Session Pooler**, porta `5432`.
 4. Garanta que a URL termina com `?sslmode=require` (ou acrescente `&sslmode=require` se já houver parâmetros).
-5. Salve essa URL como `DATABASE_URL` nos três serviços Railway.
+5. Salve essa URL como `DATABASE_URL` nos dois serviços Railway.
 
 O Session Pooler é adequado aos processos persistentes do Django e Celery. Não coloque essa URL no frontend.
 
@@ -36,17 +36,16 @@ O Session Pooler é adequado aos processos persistentes do Django e Celery. Não
 1. Crie um banco Redis na região mais próxima da Railway.
 2. Para o Celery, prefira o plano Fixed para evitar cobrança imprevisível por comando.
 3. Copie a URL TLS no formato `rediss://default:senha@endpoint:6379`.
-4. Salve-a como `REDIS_URL` nos três serviços Railway.
+4. Salve-a como `REDIS_URL` nos dois serviços Railway.
 
-## 4. Railway: API, worker e beat
+## 4. Railway: API e jobs
 
-Crie três serviços a partir do mesmo repositório GitHub. Em todos, configure **Root Directory** como `/backend`.
+Crie dois serviços a partir do mesmo repositório GitHub. Em todos, configure **Root Directory** como `/backend`.
 
 | Serviço | Config file absoluto | Domínio público |
 |---|---|---|
-| `barberhub-api` | `/backend/railway.toml` | `api.seudominio.com` |
-| `barberhub-worker` | `/backend/railway.worker.toml` | nenhum |
-| `barberhub-beat` | `/backend/railway.beat.toml` | nenhum |
+| `barberhub-api` | `/backend/railway.toml` | `api.mrbarberhub.com.br` |
+| `barberhub-jobs` | `/backend/railway.jobs.toml` | nenhum |
 
 Importe em todos os serviços as variáveis de [`.env.production.example`](../backend/.env.production.example). Use variáveis compartilhadas da Railway para evitar divergências.
 
@@ -66,75 +65,53 @@ CSRF_TRUSTED_ORIGINS=https://app.seudominio.com,https://api.seudominio.com
 DJANGO_SETTINGS_MODULE=core.settings.production
 ```
 
-O serviço API executa migrations antes do deploy e só recebe tráfego quando `/api/v1/health/` confirmar PostgreSQL e Redis. Mantenha **uma única réplica** do Beat.
+O serviço API executa migrations antes do deploy e só recebe tráfego quando `/api/v1/health/` confirmar PostgreSQL e Redis. Mantenha **uma única réplica** do serviço jobs.
 
-## 5. WhatsApp e e-mail
+## 5. WhatsApp Cloud API e e-mail
 
-### Evolution API v2 por Baileys
+### Meta WhatsApp Cloud API
 
-Crie um serviço Railway separado com a imagem estável
-`evoapicloud/evolution-api:v2.3.7`. Não use a tag `latest`. Conecte PostgreSQL
-e Redis dedicados, ou bancos logicamente isolados, e configure no serviço
-Evolution:
+Use somente a API oficial da Meta. A conta `MR BarberHub`, o número dedicado e
+o app `M&R Barberhub Notificações` devem pertencer ao portfólio M&R Solutions.
 
-```text
-SERVER_URL=https://evolution.seudominio.com
-AUTHENTICATION_API_KEY=gere-com-openssl-rand-hex-32
-DATABASE_ENABLED=true
-DATABASE_PROVIDER=postgresql
-DATABASE_CONNECTION_URI=postgresql://usuario:senha@host:5432/evolution
-DATABASE_CONNECTION_CLIENT_NAME=barberhub_evolution
-CACHE_REDIS_ENABLED=true
-CACHE_REDIS_URI=redis://default:senha@host:6379/0
-CACHE_REDIS_PREFIX_KEY=barberhub_evolution
-CACHE_REDIS_SAVE_INSTANCES=false
-CACHE_LOCAL_ENABLED=false
-```
+No Meta Business Settings, crie um usuário do sistema com acesso total ao app e
+à conta WhatsApp. Gere token com validade controlada pela operação e permissões
+`whatsapp_business_management` e `whatsapp_business_messaging`. Cadastre o token
+somente como secret da Railway.
 
-Gere domínio público HTTPS para a porta `8080`. Com o deploy saudável, exporte
-a URL pública e leia a chave sem gravá-la no histórico do shell:
+No WhatsApp Manager, crie e aguarde aprovação destes templates `UTILITY` em
+`pt_BR`:
 
-```bash
-export EVOLUTION_URL=https://evolution.seudominio.com
-read -rsp "Evolution API key: " EVOLUTION_API_KEY
-```
+- `barberhub_agendamento_recebido`: `Olá, {{1}}! Seu {{2}} foi registrado para {{3}}. A barbearia confirmará seu horário pelo WhatsApp.`
+- `barberhub_lembrete_agendamento`: `Olá, {{1}}! Lembrete: seu {{2}} está marcado para {{3}}.`
 
-Crie a instância Baileys:
-
-```bash
-curl -fsS -X POST "$EVOLUTION_URL/instance/create" \
-  -H "Content-Type: application/json" \
-  -H "apikey: $EVOLUTION_API_KEY" \
-  -d '{"instanceName":"barberhub","integration":"WHATSAPP-BAILEYS","qrcode":true}'
-```
-
-Obtenha o QR Code:
-
-```bash
-curl -fsS "$EVOLUTION_URL/instance/connect/barberhub" \
-  -H "apikey: $EVOLUTION_API_KEY"
-```
-
-No WhatsApp Business do celular, abra **Dispositivos conectados → Conectar
-dispositivo** e leia o QR Code. Conecte somente o número dedicado ao BarberHub.
-Confirme estado `open`:
-
-```bash
-curl -fsS "$EVOLUTION_URL/instance/connectionState/barberhub" \
-  -H "apikey: $EVOLUTION_API_KEY"
-```
-
-Cadastre a mesma URL, chave e instância nos serviços Railway da API, worker e
-beat:
+Cadastre como variáveis compartilhadas nos serviços `barberhub-api` e
+`barberhub-jobs`:
 
 ```text
-WHATSAPP_BASE_URL=https://evolution.seudominio.com
-WHATSAPP_API_KEY=mesma-chave-de-AUTHENTICATION_API_KEY
-WHATSAPP_INSTANCE_NAME=barberhub
+WHATSAPP_GRAPH_API_VERSION=v25.0
+WHATSAPP_PHONE_NUMBER_ID=123456789012345
+WHATSAPP_ACCESS_TOKEN=defina-no-painel
+WHATSAPP_WABA_ID=997108009625516
+WHATSAPP_TEMPLATE_LANGUAGE=pt_BR
+WHATSAPP_CONFIRMATION_TEMPLATE=barberhub_agendamento_recebido
+WHATSAPP_REMINDER_TEMPLATE=barberhub_lembrete_agendamento
 ```
 
-Se a sessão cair, repita os comandos de conexão e estado. Nunca registre chave,
-QR Code, telefone ou URLs com senha em logs, issues ou Git.
+O ID numérico do telefone é exemplo e deve ser substituído pelo valor exibido
+em WhatsApp → API Setup. O `WHATSAPP_WABA_ID` acima pertence à conta já
+identificada `MR BarberHub`. Nunca use o texto de exemplo do token em produção.
+
+O sistema envia três notificações: recebimento imediato, lembrete 24 horas antes
+e lembrete 1 hora antes. Os dois lembretes reutilizam o mesmo template.
+
+Somente depois de os templates estarem `APPROVED` e as variáveis existirem,
+implante `barberhub-api` e ative `barberhub-jobs`. O serviço jobs deve mostrar um
+worker conectado ao Redis e o beat executando
+`apps.notifications.tasks.enqueue_due_reminders` a cada 600 segundos.
+
+Nunca registre token, cabeçalho `Authorization`, telefone de cliente ou conteúdo
+de mensagem em issue, Git ou log manual.
 
 Para e-mail transacional em Railway Free, Trial ou Hobby, use a API HTTPS do Resend; SMTP de saída é bloqueado nesses planos. Verifique um subdomínio de envio, crie uma chave restrita e cadastre:
 
@@ -195,5 +172,5 @@ Após o sucesso, remova imediatamente `INITIAL_ADMIN_PASSWORD` das variáveis Ra
 Vercel e Railway mantêm deployments anteriores. Em falha:
 
 1. Faça rollback do frontend na Vercel.
-2. Faça rollback da API e worker para o mesmo commit na Railway.
+2. Faça rollback da API e jobs para o mesmo commit na Railway.
 3. Não reverta migrations destrutivamente. Restaure backup do Supabase somente após confirmar perda/corrupção de dados.

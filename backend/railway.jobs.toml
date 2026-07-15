@@ -3,6 +3,6 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "sh -c 'python -c \"import os; from redis import Redis; print(\\\"redis cleared:\\\", Redis.from_url(os.environ[\\\"REDIS_URL\\\"]).flushdb())\" && exec sleep infinity'"
+startCommand = "sh -c 'celery -A core worker -B -l INFO --concurrency=${CELERY_WORKER_CONCURRENCY:-1}'"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
