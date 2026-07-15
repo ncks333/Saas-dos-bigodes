@@ -1,5 +1,6 @@
 import {lazy, Suspense} from "react";
-import {LandingPage, PrivacyPage} from "./MarketingPages";
+import DemoOne from "@/components/ui/demo";
+import {LandingPage, MRSolutionsPage, PrivacyPage} from "./MarketingPages";
 
 const AdminApp=lazy(()=>import("./ProductApp"));
 const PublicBooking=lazy(()=>import("./ProductApp").then(module=>({default:module.PublicBooking})));
@@ -13,6 +14,8 @@ export default function App(){
   const parts=path.split("/").filter(Boolean);
   let page;
   if(path==="/")page=<LandingPage/>;
+  else if(path==="/demo/globe")page=<DemoOne/>;
+  else if(path==="/mr-solutions")page=<MRSolutionsPage/>;
   else if(path==="/login")page=<AdminApp/>;
   else if(path==="/privacidade")page=<PrivacyPage/>;
   else if(path==="/recuperar-senha")page=<PasswordResetRequestPage/>;

@@ -1,12 +1,18 @@
+import {type CSSProperties, useEffect, useState} from "react";
 import {
   ArrowRight,
   BarChart3,
   CalendarDays,
   CheckCircle2,
+  ClipboardCheck,
+  MessageCircle,
+  MonitorSmartphone,
   Scissors,
   Settings,
   UserRound,
+  Workflow,
 } from "lucide-react";
+import Globe from "@/components/ui/globe";
 import {usePageMetadata} from "./metadata";
 import "./marketing.css";
 
@@ -26,12 +32,182 @@ const productFeatures = [
   {icon: CalendarDays, title: "Agendamento público"},
 ];
 
+const solutionsServices = [
+  {icon: MonitorSmartphone, title: "Sites e produtos digitais", text: "Landing pages, sites institucionais e interfaces web com foco em clareza, confiança e conversão."},
+  {icon: Workflow, title: "Automações", text: "Fluxos para atendimento, agenda, avisos e tarefas repetitivas que hoje dependem de controle manual."},
+  {icon: ClipboardCheck, title: "Consultoria digital", text: "Diagnóstico de ferramentas, processos e prioridades para transformar operação confusa em rotina organizada."},
+];
+
+const solutionsSignals = ["Sites", "Sistemas", "Automações", "Consultoria digital"];
+
+const solutionsProblems = [
+  "Processos importantes dependem de planilhas, mensagens soltas e memória da equipe.",
+  "Clientes chegam pelo WhatsApp, Instagram ou indicação, mas não existe fluxo claro para atender e vender.",
+  "Ideias de produto ficam paradas porque falta transformar necessidade real em sistema simples de usar.",
+];
+
+const processSteps = [
+  {title: "Entender operação", text: "Mapeamos objetivo, gargalos, público e urgência antes de sugerir tecnologia."},
+  {title: "Desenhar solução", text: "Definimos escopo enxuto, telas principais, integrações e caminho de lançamento."},
+  {title: "Construir e ajustar", text: "Entregamos versão funcional, medimos uso real e evoluímos com prioridade."},
+];
+
+const shootingStars = [
+  {left: "66%", delay: "-1.4s", duration: "5.8s", top: "8%"},
+  {left: "82%", delay: "-5.1s", duration: "6.4s", top: "16%"},
+  {left: "72%", delay: "-3.9s", duration: "6.7s", top: "28%"},
+  {left: "92%", delay: "-8.2s", duration: "7.1s", top: "42%"},
+  {left: "78%", delay: "-2.7s", duration: "6.2s", top: "58%"},
+  {left: "88%", delay: "-5.4s", duration: "7.2s", top: "72%"},
+];
+
+const mrWhatsappUrl = import.meta.env.VITE_MR_SOLUTIONS_WHATSAPP_URL;
+
 function Brand() {
   return <a className="marketing-brand" href="/" aria-label="M&R BarberHub — início"><BrandMark/><strong><span>M&amp;R</span> Barber<span>Hub</span></strong></a>;
 }
 
 function BrandMark() {
   return <span className="brand-symbol" aria-hidden="true"><img src="/barberhub-icon-v2.png" alt=""/></span>;
+}
+
+function SolutionsBrand({compact = false}: {compact?: boolean}) {
+  return <a className={compact ? "solutions-brand compact" : "solutions-brand"} href="/mr-solutions" aria-label="M&R Solutions — início">
+    <img src={compact ? "/mr-solutions-logo-icon.png" : "/mr-solutions-logo-compact-cutout.png"} alt="M&R Solutions"/>
+  </a>;
+}
+
+function useSolutionsReveal() {
+  useEffect(() => {
+    const items = Array.from(document.querySelectorAll<HTMLElement>(".solutions-reveal"));
+    if (!items.length) return;
+
+    const reveal = (element: HTMLElement) => element.classList.add("is-visible");
+    if (!("IntersectionObserver" in window)) {
+      items.forEach(reveal);
+      return;
+    }
+
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+        reveal(entry.target as HTMLElement);
+        observer.unobserve(entry.target);
+      });
+    }, {rootMargin: "0px 0px -12% 0px", threshold: 0.18});
+
+    items.forEach(item => observer.observe(item));
+    return () => observer.disconnect();
+  }, []);
+}
+
+function useSolutionsHeaderScroll(offset = 10) {
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > offset);
+    onScroll();
+    window.addEventListener("scroll", onScroll, {passive: true});
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [offset]);
+  return scrolled;
+}
+
+export function MRSolutionsPage() {
+  usePageMetadata("M&R Solutions | Sistemas, sites e automações", "Sistemas, sites e automações para empresas que querem operar melhor.", "/mr-solutions");
+  useSolutionsReveal();
+  const navScrolled = useSolutionsHeaderScroll();
+  return <main className="solutions-shell">
+    <div className="solutions-sky" aria-hidden="true">
+      {shootingStars.map((star, index) => <span
+        className="shooting-star"
+        key={index}
+        style={{
+          "--star-left": star.left,
+          "--star-delay": star.delay,
+          "--star-duration": star.duration,
+          "--star-top": star.top,
+        } as CSSProperties}
+      />)}
+    </div>
+    <header className={navScrolled ? "solutions-nav is-scrolled" : "solutions-nav"}>
+      <SolutionsBrand/>
+      <nav aria-label="Navegação M&R Solutions"><a href="#servicos">Serviços</a><a href="#case">BarberHub</a><a href="#processo">Processo</a></nav>
+      <a className="solutions-whatsapp" href={mrWhatsappUrl} target="_blank" rel="noreferrer"><MessageCircle/> Contato</a>
+    </header>
+
+    <section className="solutions-hero solutions-reveal">
+      <div className="solutions-hero-copy solutions-reveal">
+        <p className="solutions-kicker">M&amp;R Solutions</p>
+        <h1>Sistemas, sites e automações para empresas que querem operar melhor.</h1>
+        <p>A M&amp;R Solutions cria soluções digitais sob medida para organizar processos, melhorar atendimento e transformar ideias em produto.</p>
+        <div className="solutions-actions">
+          <a className="solutions-primary" href={mrWhatsappUrl} target="_blank" rel="noreferrer"><MessageCircle/> Conversar sobre meu projeto</a>
+          <a className="solutions-secondary" href="#servicos">Ver serviços</a>
+        </div>
+        <div className="solutions-trust" aria-label="Áreas de atuação">{solutionsSignals.map((item, index) => <span style={{"--delay": `${index * 80}ms`} as CSSProperties} key={item}>{item}</span>)}</div>
+      </div>
+      <aside className="solutions-hero-mark solutions-reveal" aria-label="Identidade M&R Solutions">
+        <div className="solutions-orbit" aria-label="Globo digital M&R Solutions">
+          <Globe fullScreen={false} size={300}/>
+          <span className="hero-symbol" aria-hidden="true"/>
+        </div>
+        <img className="hero-logo" src="/mr-solutions-logo-full-cutout.png" alt="M&R Solutions"/>
+        <div className="hero-note">
+          <span>Empresa em construção pública</span>
+          <strong>Projetos selecionados em preparação</strong>
+        </div>
+      </aside>
+    </section>
+
+    <section className="solutions-problems solutions-reveal" aria-label="Problemas que resolvemos">
+      <div><p className="solutions-kicker">O que resolvemos</p><h2>Quando a operação cresce no improviso, tecnologia vira necessidade.</h2></div>
+      <ul>{solutionsProblems.map((item, index) => <li style={{"--delay": `${index * 90}ms`} as CSSProperties} key={item}><CheckCircle2/>{item}</li>)}</ul>
+    </section>
+
+    <section className="solutions-services solutions-reveal" id="servicos" aria-label="Serviços M&R Solutions">
+      <div className="solutions-section-heading"><p className="solutions-kicker">Serviços</p><h2>Três frentes para tirar a ideia do papel e colocar a operação em ordem.</h2></div>
+      <div className="solutions-service-grid">{solutionsServices.map(({icon: Icon, title, text}, index) => <article style={{"--delay": `${index * 100}ms`} as CSSProperties} key={title}>
+        <Icon/>
+        <h3>{title}</h3>
+        <p>{text}</p>
+      </article>)}</div>
+    </section>
+
+    <section className="solutions-case solutions-reveal" id="case">
+      <div className="case-copy">
+        <p className="solutions-kicker">Prova real</p>
+        <h2>BarberHub nasceu como produto próprio da M&amp;R.</h2>
+        <p>Um SaaS para barbearias com agendamento online, painel administrativo, clientes, serviços, notificações e operação multiempresa.</p>
+        <a href="/" className="solutions-text-link">Conhecer BarberHub <ArrowRight/></a>
+      </div>
+      <div className="case-panel" aria-label="Resumo do BarberHub">
+        <span>Produto próprio</span>
+        <strong>Agendamento, gestão e atendimento no mesmo fluxo.</strong>
+        <div><b>Agenda online</b><b>Painel SaaS</b><b>Multiempresa</b></div>
+      </div>
+    </section>
+
+    <section className="solutions-process solutions-reveal" id="processo">
+      <div className="solutions-section-heading"><p className="solutions-kicker">Processo</p><h2>Como começamos</h2></div>
+      <div>{processSteps.map((step, index) => <article style={{"--delay": `${index * 100}ms`} as CSSProperties} key={step.title}>
+        <span>{String(index + 1).padStart(2, "0")}</span>
+        <h3>{step.title}</h3>
+        <p>{step.text}</p>
+      </article>)}</div>
+    </section>
+
+    <section className="solutions-final solutions-reveal">
+      <p className="solutions-kicker">Próximo passo</p>
+      <h2>Conte o que sua empresa precisa organizar, vender ou automatizar.</h2>
+      <a className="solutions-primary" href={mrWhatsappUrl} target="_blank" rel="noreferrer"><MessageCircle/> Conversar sobre meu projeto</a>
+    </section>
+
+    <footer className="solutions-footer">
+      <SolutionsBrand/>
+      <span>Projetos selecionados em preparação</span>
+      <a href={mrWhatsappUrl} target="_blank" rel="noreferrer">WhatsApp</a>
+    </footer>
+  </main>;
 }
 
 export function LandingPage() {
@@ -96,7 +272,7 @@ export function LandingPage() {
 
     <section className="marketing-cta"><div><h2>Abra o BarberHub e acompanhe a rotina.</h2><p>Use o painel para gerenciar agenda, clientes, serviços e configurações da barbearia.</p></div><a className="marketing-primary" href="/login">Acessar painel <ArrowRight/></a></section>
 
-    <footer className="marketing-footer"><Brand/><p>Produto da M&amp;R Solutions.</p><div><a href="/privacidade">Privacidade</a><a href="/login">Painel</a></div></footer>
+    <footer className="marketing-footer"><Brand/><p>Produto da <a href="/mr-solutions">M&amp;R Solutions</a>.</p><div><a href="/privacidade">Privacidade</a><a href="/login">Painel</a></div></footer>
   </main>;
 }
 
