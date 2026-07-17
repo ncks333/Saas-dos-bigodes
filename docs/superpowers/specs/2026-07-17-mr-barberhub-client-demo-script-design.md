@@ -3,7 +3,7 @@
 Data: 2026-07-17  
 Público: dono de barbearia  
 Duração: 10–15 minutos  
-Formato: chamada com tela compartilhada
+Formato: demonstração presencial
 
 ## Objetivo
 
@@ -22,23 +22,32 @@ O cliente deve terminar a conversa entendendo três coisas:
 - Agendamento público: `https://app.mrbarberhub.com.br/agendar/bigodes`
 - Painel: `https://app.mrbarberhub.com.br/login`
 
+## Preparação presencial
+
+- levar notebook com o painel já aberto;
+- abrir o agendamento no celular para demonstrar a experiência do cliente;
+- levar um QR Code ou link curto do agendamento público;
+- sentar ao lado do dono e deixar que ele toque no fluxo no próprio celular;
+- usar um serviço e um horário de teste, sem cadastrar dados de clientes reais;
+- conduzir a conversa a partir da rotina real da barbearia, não de uma apresentação técnica.
+
 ## Roteiro
 
 ### 1. Abertura — 1 minuto
 
 Fala sugerida:
 
-> “A ideia é mostrar como um cliente marca um horário pelo celular e como você acompanha tudo em um único painel, sem depender de troca de mensagens para organizar a agenda.”
+> “Vou te mostrar no seu celular como um cliente marca um horário e, depois, como você acompanha tudo em um único painel, sem depender de troca de mensagens para organizar a agenda.”
 
 Pergunta de conexão:
 
 > “Hoje, onde mais acontece o retrabalho: no agendamento, nas confirmações ou nos horários esquecidos?”
 
-Não iniciar pela parte técnica. Primeiro ouvir a resposta e conectar a demonstração ao problema citado.
+Não iniciar pela parte técnica. Primeiro ouvir a resposta e conectar a demonstração ao problema citado. Se ele interromper para contar um caso real, abandonar o roteiro por alguns minutos e voltar ao fluxo usando aquele caso como exemplo.
 
 ### 2. Experiência do cliente — 3 minutos
 
-Abrir o agendamento público e narrar:
+Entregar o celular ao dono, abrir o agendamento público e narrar somente o necessário:
 
 1. o cliente escolhe o serviço;
 2. escolhe data e horário disponível;
@@ -48,13 +57,13 @@ Abrir o agendamento público e narrar:
 
 Fala sugerida:
 
-> “O cliente não precisa esperar alguém responder. Ele vê apenas os horários disponíveis e envia a reserva pelo celular.”
+> “O cliente não precisa esperar alguém responder. Ele vê apenas os horários disponíveis e envia a reserva pelo celular. Pode tocar você mesmo para ver como fica.”
 
 Usar um nome de teste e um número interno autorizado. Não usar dados de cliente real na primeira apresentação.
 
 ### 3. Painel do dono — 4 minutos
 
-Abrir o painel e mostrar nesta ordem:
+No notebook, abrir o painel e mostrar nesta ordem:
 
 1. agenda do dia;
 2. detalhes do atendimento;
@@ -66,7 +75,7 @@ Fala sugerida:
 
 > “O painel transforma o que chegou pelo agendamento em uma rotina visual: você sabe quem vem, qual serviço será feito e em que horário.”
 
-Conectar cada tela a um benefício operacional. Evitar navegar por configurações que não ajudem a decisão do cliente.
+Conectar cada tela a um benefício operacional. Evitar navegar por configurações que não ajudem a decisão do cliente. Sempre que possível, perguntar “isso resolveria aquela situação que você comentou?”
 
 ### 4. WhatsApp — 2 minutos
 
@@ -112,13 +121,15 @@ Encerramento:
 
 > “Sim. Fazemos um teste acompanhado com um número interno, conferimos a agenda e validamos as notificações antes de liberar para os clientes.”
 
-## Preparação antes da chamada
+## Preparação antes da visita
 
 - abrir os quatro links em abas separadas;
 - confirmar que o agendamento público responde;
 - deixar um serviço e um horário de teste disponíveis;
 - usar dados fictícios ou autorizados;
 - manter o painel pronto para login;
+- levar carregador e garantir internet no notebook e no celular;
+- combinar uma demonstração de no máximo 15 minutos antes de começar;
 - não abrir Railway, tokens ou configurações internas na tela compartilhada;
 - ter uma captura ou gravação curta do fluxo como plano B.
 
@@ -130,4 +141,3 @@ A apresentação foi boa quando o dono consegue explicar, com as próprias palav
 - onde ele acompanha os horários;
 - qual problema os lembretes resolvem;
 - qual será o próximo passo para começar.
-
