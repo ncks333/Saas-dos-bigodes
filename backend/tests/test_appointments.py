@@ -114,3 +114,19 @@ def test_available_slots_use_thirty_minute_intervals(barbershop):
 
     assert len(slots) > 1
     assert all(current - previous == timedelta(minutes=30) for previous, current in zip(slots, slots[1:]))
+
+
+@pytest.mark.django_db
+def test_available_slots_use_constant_query_count(barbershop, django_assert_num_queries):
+    service = Service.objects.create(
+        barbershop=barbershop,
+        name="Consulta constante",
+        price=Decimal("50.00"),
+        duration_minutes=30,
+    )
+    day = (datetime.now(ZoneInfo(barbershop.timezone)) + timedelta(days=7)).date()
+
+    with django_assert_num_queries(3):
+        slots = available_slots(barbershop=barbershop, day=day, service=service)
+
+    assert slots

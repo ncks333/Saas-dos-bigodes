@@ -158,3 +158,120 @@ test("painel abre a navegação móvel sem estourar a tela", async ({page}) => {
   await expect(page.getByRole("button", {name: "Agenda", exact: true})).toBeVisible();
   await noHorizontalOverflow(page);
 });
+
+test("status da agenda atualiza antes da resposta e não recarrega a lista", async ({page}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("access", "teste");
+    localStorage.setItem("refresh", "teste");
+    localStorage.setItem("user", JSON.stringify({id: 1, name: "Admin", role: "ADMIN"}));
+  });
+  let listGets = 0;
+  let releasePatch!: () => void;
+  const patchReleased = new Promise<void>(resolve => { releasePatch = resolve; });
+  const appointmentStartsAt = new Date().toISOString();
+  const appointmentEndsAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+  await page.route("**/api/v1/**", async route => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname.endsWith("/appointments/") && request.method() === "GET") {
+      listGets += 1;
+      await route.fulfill({json: [{id: 7, customer: 2, customer_name: "Cliente", service: 3, service_name: "Corte", employee: null, starts_at: appointmentStartsAt, ends_at: appointmentEndsAt, notes: "", status: "PENDENTE", source: "MANUAL"}]});
+      return;
+    }
+    if (url.pathname.endsWith("/appointments/7/") && request.method() === "PATCH") {
+      await patchReleased;
+      await route.fulfill({json: {id: 7, customer: 2, customer_name: "Cliente", service: 3, service_name: "Corte", employee: null, starts_at: appointmentStartsAt, ends_at: appointmentEndsAt, notes: "", status: "CONFIRMADO", source: "MANUAL"}});
+      return;
+    }
+    if (url.pathname.endsWith("/daily_summary/")) {
+      await route.fulfill({json: {total: 1, confirmed: 0, pending: 1, awaiting: 0, cancelled: 0, completed: 0, no_show: 0, revenue: 0}});
+      return;
+    }
+    if (url.pathname.endsWith("/dashboard/")) {
+      await route.fulfill({json: {daily_revenue: 0, monthly_revenue: 0, cancellation_rate: 0, popular_hours: []}});
+      return;
+    }
+    await route.fulfill({json: []});
+  });
+  await page.goto("/login");
+  await expect(page.locator(".sidebar-brand img").first()).toBeVisible();
+  await page.locator(".mobile-menu").click();
+  await page.getByRole("button", {name: "Agenda", exact: true}).click();
+  await page.getByLabel("Status").selectOption("CONFIRMADO");
+  await expect(page.getByLabel("Status")).toHaveValue("CONFIRMADO", {timeout: 1000});
+  expect(listGets).toBe(1);
+  releasePatch();
+});
+
+test("status da agenda volta ao valor anterior quando API falha", async ({page}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("access", "teste");
+    localStorage.setItem("refresh", "teste");
+    localStorage.setItem("user", JSON.stringify({id: 1, name: "Admin", role: "ADMIN"}));
+  });
+  const appointmentStartsAt = new Date().toISOString();
+  const appointmentEndsAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+  await page.route("**/api/v1/**", async route => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname.endsWith("/appointments/") && request.method() === "GET") {
+      await route.fulfill({json: [{id: 7, customer: 2, customer_name: "Cliente", service: 3, service_name: "Corte", employee: null, starts_at: appointmentStartsAt, ends_at: appointmentEndsAt, notes: "", status: "PENDENTE", source: "MANUAL"}]});
+      return;
+    }
+    if (url.pathname.endsWith("/appointments/7/") && request.method() === "PATCH") {
+      await route.fulfill({status: 500, json: {detail: "Falha controlada"}});
+      return;
+    }
+    if (url.pathname.endsWith("/daily_summary/")) {
+      await route.fulfill({json: {total: 1, confirmed: 0, pending: 1, awaiting: 0, cancelled: 0, completed: 0, no_show: 0, revenue: 0}});
+      return;
+    }
+    if (url.pathname.endsWith("/dashboard/")) {
+      await route.fulfill({json: {daily_revenue: 0, monthly_revenue: 0, cancellation_rate: 0, popular_hours: []}});
+      return;
+    }
+    await route.fulfill({json: []});
+  });
+  await page.goto("/login");
+  await expect(page.locator(".sidebar-brand img").first()).toBeVisible();
+  await page.locator(".mobile-menu").click();
+  await page.getByRole("button", {name: "Agenda", exact: true}).click();
+  await page.getByLabel("Status").selectOption("CONFIRMADO");
+  await expect(page.getByLabel("Status")).toHaveValue("PENDENTE", {timeout: 2000});
+  await expect(page.getByText("Serviço temporariamente indisponível. Tente novamente em instantes.")).toBeVisible();
+});
+
+test("busca de clientes aguarda digitação antes de consultar API", async ({page}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("access", "teste");
+    localStorage.setItem("refresh", "teste");
+    localStorage.setItem("user", JSON.stringify({id: 1, name: "Admin", role: "ADMIN"}));
+  });
+  const searchRequests: string[] = [];
+  await page.route("**/api/v1/**", async route => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname.endsWith("/customers/") && request.method() === "GET") {
+      const search = url.searchParams.get("search");
+      if (search) searchRequests.push(search);
+      await route.fulfill({json: []});
+      return;
+    }
+    if (url.pathname.endsWith("/daily_summary/")) {
+      await route.fulfill({json: {total: 0, confirmed: 0, pending: 0, awaiting: 0, cancelled: 0, completed: 0, no_show: 0, revenue: 0}});
+      return;
+    }
+    if (url.pathname.endsWith("/dashboard/")) {
+      await route.fulfill({json: {daily_revenue: 0, monthly_revenue: 0, cancellation_rate: 0, popular_hours: []}});
+      return;
+    }
+    await route.fulfill({json: []});
+  });
+  await page.goto("/login");
+  await expect(page.locator(".sidebar-brand img").first()).toBeVisible();
+  await page.locator(".mobile-menu").click();
+  await page.getByRole("button", {name: "Clientes", exact: true}).click();
+  await page.getByPlaceholder("Buscar por nome ou WhatsApp").pressSequentially("abc", {delay: 25});
+  await page.waitForTimeout(500);
+  expect(searchRequests).toEqual(["abc"]);
+});
