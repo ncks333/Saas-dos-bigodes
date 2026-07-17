@@ -212,6 +212,20 @@ no Railway CPU, memória, reinícios e suspensão do serviço web. Confirme tamb
 Railway e Supabase usam a mesma região e que o pool de conexões não atingiu o limite.
 Só aumente workers ou plano depois de observar saturação nesses indicadores.
 
+Para comparar a operação autenticada, use a mesma conta de teste e o endpoint
+`GET /api/v1/appointments/?day=YYYY-MM-DD`. Faça cinco medições frias, aguardando o
+período normal de suspensão entre cada primeira chamada, e cinco medições quentes em
+sequência. Registre os cinco tempos, calcule a mediana de cada grupo e anote a data,
+região e commit implantado. O critério de comparação é:
+
+```text
+fria:  t1, t2, t3, t4, t5  → mediana fria
+quente: t1, t2, t3, t4, t5 → mediana quente
+```
+
+Não cole token JWT, cookies ou dados reais no relatório. Use DevTools para preservar
+autenticação local sem expor credenciais.
+
 ## 9. Rollback
 
 Vercel e Railway mantêm deployments anteriores. Em falha:

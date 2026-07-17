@@ -42,6 +42,11 @@ async function fetchAll<T>(path: string, params?: Record<string, unknown>): Prom
   return items;
 }
 const dateTimeLocal = (value: string) => value ? format(new Date(value), "yyyy-MM-dd'T'HH:mm") : "";
+const dateInTimezone = (timezone: string) => {
+  const parts = new Intl.DateTimeFormat("en-US", {timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit"}).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+};
 const toIso = (value: string) => new Date(value).toISOString();
 const money = (value: string | number) => Number(value).toLocaleString("pt-BR", {style: "currency", currency: "BRL"});
 const findErrorMessage = (value: unknown): string | null => {
@@ -139,7 +144,13 @@ function CustomersPage() {
   const query = useQuery({queryKey: ["customers", debouncedSearch], queryFn: () => fetchAll<Customer>("/customers/", {search: debouncedSearch})});
   const replaceCustomer = (customer: Customer) => {
     qc.setQueriesData<Customer[]>({queryKey: ["customers"]}, current => current?.map(item => item.id === customer.id ? customer : item));
-    qc.setQueryData<Customer[]>(["customers-options"], current => current?.map(item => item.id === customer.id ? customer : item));
+    qc.setQueryData<Customer[]>(["customers-options"], current => {
+      if (!current) return current;
+      if (!customer.active) return current.filter(item => item.id !== customer.id);
+      return current.some(item => item.id === customer.id)
+        ? current.map(item => item.id === customer.id ? customer : item)
+        : [...current, customer];
+    });
   };
   const save = useMutation({mutationFn: (d: Partial<Customer>) => d.id ? api.patch<Customer>(`/customers/${d.id}/`, d).then(response => response.data) : api.post<Customer>("/customers/", d).then(response => response.data), onSuccess: (customer, variables) => {if (variables.id) replaceCustomer(customer); else void qc.invalidateQueries({queryKey: ["customers"]}); setEditing(null);}});
   const remove = useMutation({mutationFn: (id: number) => api.delete(`/customers/${id}/`).then(() => id), onSuccess: id => {qc.setQueriesData<Customer[]>({queryKey: ["customers"]}, current => current?.filter(item => item.id !== id)); qc.setQueryData<Customer[]>(["customers-options"], current => current?.filter(item => item.id !== id));}});
@@ -154,7 +165,13 @@ function ServicesPage() {
   const query = useQuery({queryKey: ["services"], queryFn: () => fetchAll<Service>("/services/")});
   const replaceService = (service: Service) => {
     qc.setQueriesData<Service[]>({queryKey: ["services"]}, current => current?.map(item => item.id === service.id ? service : item));
-    qc.setQueryData<Service[]>(["services-options"], current => current?.map(item => item.id === service.id ? service : item));
+    qc.setQueryData<Service[]>(["services-options"], current => {
+      if (!current) return current;
+      if (!service.active) return current.filter(item => item.id !== service.id);
+      return current.some(item => item.id === service.id)
+        ? current.map(item => item.id === service.id ? service : item)
+        : [...current, service];
+    });
   };
   const save = useMutation({mutationFn: (d: Partial<Service>) => d.id ? api.patch<Service>(`/services/${d.id}/`, d).then(response => response.data) : api.post<Service>("/services/", d).then(response => response.data), onSuccess: (service, variables) => {if (variables.id) replaceService(service); else void qc.invalidateQueries({queryKey: ["services"]}); setEditing(null);}});
   const remove = useMutation({mutationFn: (id: number) => api.delete(`/services/${id}/`).then(() => id), onSuccess: id => {qc.setQueriesData<Service[]>({queryKey: ["services"]}, current => current?.filter(item => item.id !== id)); qc.setQueryData<Service[]>(["services-options"], current => current?.filter(item => item.id !== id));}});
@@ -165,8 +182,10 @@ function ServiceForm({value, save, close}: {value: Partial<Service>; save: Retur
 }
 
 function AppointmentsPage({role}: {role: Role}) {
-  const qc = useQueryClient(); const [editing, setEditing] = useState<Partial<Appointment> | null>(null); const [day, setDay] = useState(format(new Date(), "yyyy-MM-dd"));
-  const appointments = useQuery({queryKey: ["appointments", day], queryFn: () => fetchAll<Appointment>("/appointments/", {ordering: "starts_at", day})});
+  const qc = useQueryClient(); const [editing, setEditing] = useState<Partial<Appointment> | null>(null); const [chosenDay, setChosenDay] = useState("");
+  const shop = useQuery({queryKey: ["barbershop"], queryFn: () => api.get<Shop>("/barbershop/").then(response => response.data)});
+  const day = chosenDay || (shop.data ? dateInTimezone(shop.data.timezone) : "");
+  const appointments = useQuery({queryKey: ["appointments", day], enabled: !!day, queryFn: () => fetchAll<Appointment>("/appointments/", {ordering: "starts_at", day})});
   const customers = useQuery({queryKey: ["customers-options"], queryFn: () => fetchAll<Customer>("/customers/", {active: true})});
   const services = useQuery({queryKey: ["services-options"], queryFn: () => fetchAll<Service>("/services/", {active: true})});
   const employees = useQuery({queryKey: ["users-options"], enabled: role === "ADMIN", queryFn: () => fetchAll<Employee>("/users/")});
@@ -176,7 +195,7 @@ function AppointmentsPage({role}: {role: Role}) {
   const cancel = useMutation({mutationFn: (id: number) => api.post<Appointment>(`/appointments/${id}/cancel/`).then(response => response.data), onSuccess: serverItem => {qc.setQueryData<Appointment[]>(["appointments", day], current => current?.map(item => item.id === serverItem.id ? serverItem : item)); refreshReports();}});
   const shown = listOf(appointments.data);
   const canCancel = (a: Appointment) => ["PENDENTE", "CONFIRMADO", "AGUARDANDO_CONFIRMACAO"].includes(a.status);
-  return <><PageHeader title="Agenda" description="Acompanhe e gerencie todos os atendimentos." action={<Button onClick={() => setEditing({customer: undefined, service: undefined, employee: null, starts_at: `${day}T09:00`, status: "PENDENTE", notes: ""})}><Plus/> Novo agendamento</Button>}/><div className="toolbar"><label>Data<input type="date" value={day} onChange={e => setDay(e.target.value)}/></label><span>{shown.length} atendimento(s)</span></div><ErrorMessage error={status.error || cancel.error}/>{appointments.isLoading ? <Loading/> : shown.length ? <div className="agenda-list">{shown.sort((a,b) => a.starts_at.localeCompare(b.starts_at)).map(a => <article key={a.id}><time>{format(new Date(a.starts_at), "HH:mm")}<small>{format(new Date(a.ends_at), "HH:mm")}</small></time><div className="agenda-main"><strong>{a.customer_name}</strong><span>{a.service_name} · {a.source === "ONLINE" ? "Online" : "Manual"}</span>{a.notes && <small>{a.notes}</small>}</div><select aria-label="Status" value={a.status} disabled={status.isPending || cancel.isPending} onChange={e => status.mutate({id: a.id, status: e.target.value})}>{statuses.map(([v,l]) => <option key={v} value={v}>{l}</option>)}</select><Badge status={a.status}/><div className="agenda-actions"><button title="Editar agendamento" onClick={() => setEditing({...a, starts_at: dateTimeLocal(a.starts_at)})}><Settings/> Editar</button>{canCancel(a) && <button className="cancel-action" title="Cancelar agendamento" onClick={() => confirm(`Cancelar o horário de ${a.customer_name}?`) && cancel.mutate(a.id)}><Trash2/> Cancelar</button>}</div></article>)}</div> : <Empty>Nenhum atendimento nesta data.</Empty>}{editing && <AppointmentForm value={editing} customers={listOf(customers.data)} services={listOf(services.data)} employees={listOf(employees.data)} save={save} close={() => setEditing(null)}/>}</>;
+  return <><PageHeader title="Agenda" description="Acompanhe e gerencie todos os atendimentos." action={<Button onClick={() => setEditing({customer: undefined, service: undefined, employee: null, starts_at: `${day}T09:00`, status: "PENDENTE", notes: ""})}><Plus/> Novo agendamento</Button>}/><div className="toolbar"><label>Data<input type="date" value={day} onChange={e => setChosenDay(e.target.value)}/></label><span>{shown.length} atendimento(s)</span></div><ErrorMessage error={status.error || cancel.error}/>{appointments.isLoading ? <Loading/> : shown.length ? <div className="agenda-list">{shown.sort((a,b) => a.starts_at.localeCompare(b.starts_at)).map(a => <article key={a.id}><time>{format(new Date(a.starts_at), "HH:mm")}<small>{format(new Date(a.ends_at), "HH:mm")}</small></time><div className="agenda-main"><strong>{a.customer_name}</strong><span>{a.service_name} · {a.source === "ONLINE" ? "Online" : "Manual"}</span>{a.notes && <small>{a.notes}</small>}</div><select aria-label="Status" value={a.status} disabled={status.isPending || cancel.isPending} onChange={e => status.mutate({id: a.id, status: e.target.value})}>{statuses.map(([v,l]) => <option key={v} value={v}>{l}</option>)}</select><Badge status={a.status}/><div className="agenda-actions"><button title="Editar agendamento" onClick={() => setEditing({...a, starts_at: dateTimeLocal(a.starts_at)})}><Settings/> Editar</button>{canCancel(a) && <button className="cancel-action" title="Cancelar o horário de ${a.customer_name}?" onClick={() => confirm(`Cancelar o horário de ${a.customer_name}?`) && cancel.mutate(a.id)}><Trash2/> Cancelar</button>}</div></article>)}</div> : <Empty>Nenhum atendimento nesta data.</Empty>}{editing && <AppointmentForm value={editing} customers={listOf(customers.data)} services={listOf(services.data)} employees={listOf(employees.data)} save={save} close={() => setEditing(null)}/>}</>;
 }
 function AppointmentForm({value, customers, services, employees, save, close}: {value: Partial<Appointment>; customers: Customer[]; services: Service[]; employees: Employee[]; save: ReturnType<typeof useMutation<unknown, Error, Partial<Appointment>>>; close: () => void}) {
   const [d, setD] = useState(value); return <Modal title={d.id ? "Editar agendamento" : "Novo agendamento"} onClose={close}><form className="form-grid" onSubmit={e => {e.preventDefault(); save.mutate(d);}}><label>Cliente<select required value={d.customer ?? ""} onChange={e => setD({...d, customer: Number(e.target.value)})}><option value="">Selecione</option>{customers.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label><label>Serviço<select required value={d.service ?? ""} onChange={e => setD({...d, service: Number(e.target.value)})}><option value="">Selecione</option>{services.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label><label>Data e horário<input required type="datetime-local" value={d.starts_at ?? ""} onChange={e => setD({...d, starts_at: e.target.value})}/></label><label>Profissional<select value={d.employee ?? ""} onChange={e => setD({...d, employee: e.target.value ? Number(e.target.value) : null})}><option value="">Sem preferência</option>{employees.filter(x => x.is_active).map(x => <option key={x.id} value={x.id}>{x.first_name || x.username}</option>)}</select></label><label className="full">Status<select value={d.status ?? "PENDENTE"} onChange={e => setD({...d, status: e.target.value})}>{statuses.map(([v,l]) => <option key={v} value={v}>{l}</option>)}</select></label><label className="full">Observações<textarea rows={3} value={d.notes ?? ""} onChange={e => setD({...d, notes: e.target.value})}/></label><ErrorMessage error={save.error}/><div className="form-actions full"><Button type="button" variant="secondary" onClick={close}>Cancelar</Button><Button disabled={save.isPending}><Save/> Salvar</Button></div></form></Modal>;

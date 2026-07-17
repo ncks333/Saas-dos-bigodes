@@ -134,7 +134,9 @@ test("painel abre a navegação móvel sem estourar a tela", async ({page}) => {
   });
   await page.route("**/api/v1/**", async route => {
     const url = route.request().url();
-    const json = url.includes("daily_summary")
+    const json = url.endsWith("/barbershop/")
+      ? {id: 1, name: "Bigodes", slug: "bigodes", whatsapp: "", timezone: "America/Sao_Paulo", active: true, operating_hours: []}
+      : url.includes("daily_summary")
       ? {total: 0, confirmed: 0, pending: 0, awaiting: 0, cancelled: 0, completed: 0, no_show: 0, revenue: 0}
       : url.includes("/appointments/") ? []
       : {daily_revenue: 0, monthly_revenue: 0, cancellation_rate: 0, popular_hours: []};
@@ -167,12 +169,18 @@ test("status da agenda atualiza antes da resposta e não recarrega a lista", asy
   });
   let listGets = 0;
   let releasePatch!: () => void;
+  let completePatch!: () => void;
   const patchReleased = new Promise<void>(resolve => { releasePatch = resolve; });
+  const patchCompleted = new Promise<void>(resolve => { completePatch = resolve; });
   const appointmentStartsAt = new Date().toISOString();
   const appointmentEndsAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
   await page.route("**/api/v1/**", async route => {
     const request = route.request();
     const url = new URL(request.url());
+    if (url.pathname.endsWith("/barbershop/") && request.method() === "GET") {
+      await route.fulfill({json: {id: 1, name: "Bigodes", slug: "bigodes", whatsapp: "", timezone: "America/Sao_Paulo", active: true, operating_hours: []}});
+      return;
+    }
     if (url.pathname.endsWith("/appointments/") && request.method() === "GET") {
       listGets += 1;
       await route.fulfill({json: [{id: 7, customer: 2, customer_name: "Cliente", service: 3, service_name: "Corte", employee: null, starts_at: appointmentStartsAt, ends_at: appointmentEndsAt, notes: "", status: "PENDENTE", source: "MANUAL"}]});
@@ -181,6 +189,7 @@ test("status da agenda atualiza antes da resposta e não recarrega a lista", asy
     if (url.pathname.endsWith("/appointments/7/") && request.method() === "PATCH") {
       await patchReleased;
       await route.fulfill({json: {id: 7, customer: 2, customer_name: "Cliente", service: 3, service_name: "Corte", employee: null, starts_at: appointmentStartsAt, ends_at: appointmentEndsAt, notes: "", status: "CONFIRMADO", source: "MANUAL"}});
+      completePatch();
       return;
     }
     if (url.pathname.endsWith("/daily_summary/")) {
@@ -199,8 +208,9 @@ test("status da agenda atualiza antes da resposta e não recarrega a lista", asy
   await page.getByRole("button", {name: "Agenda", exact: true}).click();
   await page.getByLabel("Status").selectOption("CONFIRMADO");
   await expect(page.getByLabel("Status")).toHaveValue("CONFIRMADO", {timeout: 1000});
-  expect(listGets).toBe(1);
   releasePatch();
+  await patchCompleted;
+  expect(listGets).toBe(1);
 });
 
 test("status da agenda volta ao valor anterior quando API falha", async ({page}) => {
@@ -214,6 +224,10 @@ test("status da agenda volta ao valor anterior quando API falha", async ({page})
   await page.route("**/api/v1/**", async route => {
     const request = route.request();
     const url = new URL(request.url());
+    if (url.pathname.endsWith("/barbershop/") && request.method() === "GET") {
+      await route.fulfill({json: {id: 1, name: "Bigodes", slug: "bigodes", whatsapp: "", timezone: "America/Sao_Paulo", active: true, operating_hours: []}});
+      return;
+    }
     if (url.pathname.endsWith("/appointments/") && request.method() === "GET") {
       await route.fulfill({json: [{id: 7, customer: 2, customer_name: "Cliente", service: 3, service_name: "Corte", employee: null, starts_at: appointmentStartsAt, ends_at: appointmentEndsAt, notes: "", status: "PENDENTE", source: "MANUAL"}]});
       return;

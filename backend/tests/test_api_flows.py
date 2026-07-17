@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -138,6 +138,48 @@ def test_appointment_list_filters_by_tenant_local_day(api_client, barbershop):
 
     all_items = api_client.get("/api/v1/appointments/")
     assert {item["id"] for item in all_items.data["results"]} == {target.id, other.id}
+
+
+@pytest.mark.django_db
+def test_appointment_day_filter_respects_non_default_timezone_boundary(api_client, barbershop):
+    barbershop.timezone = "America/New_York"
+    barbershop.save(update_fields=["timezone", "updated_at"])
+    customer = Customer.objects.create(
+        barbershop=barbershop,
+        name="Fuso",
+        whatsapp="5511955555556",
+    )
+    service = Service.objects.create(
+        barbershop=barbershop,
+        name="Serviço fuso",
+        price=Decimal("45.00"),
+        duration_minutes=30,
+    )
+    local_tz = ZoneInfo(barbershop.timezone)
+    local_day = (datetime.now(local_tz) + timedelta(days=10)).date()
+    late_start = datetime.combine(local_day, time(23, 30), tzinfo=local_tz)
+    next_day_start = datetime.combine(local_day + timedelta(days=1), time(0, 30), tzinfo=local_tz)
+    late = Appointment.objects.create(
+        barbershop=barbershop,
+        customer=customer,
+        service=service,
+        starts_at=late_start,
+        ends_at=late_start + timedelta(minutes=30),
+        duration_minutes=30,
+    )
+    Appointment.objects.create(
+        barbershop=barbershop,
+        customer=customer,
+        service=service,
+        starts_at=next_day_start,
+        ends_at=next_day_start + timedelta(minutes=30),
+        duration_minutes=30,
+    )
+
+    response = api_client.get("/api/v1/appointments/", {"day": local_day.isoformat()})
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.data["results"]] == [late.id]
 
 
 @pytest.mark.django_db
