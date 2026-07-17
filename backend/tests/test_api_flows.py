@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -9,6 +9,7 @@ from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from rest_framework.test import APIClient
 
+from apps.accounts.models import User
 from apps.appointments.models import Appointment
 from apps.customers.models import Customer
 from apps.services.models import Service
@@ -63,6 +64,26 @@ def test_management_crud_and_settings(api_client, barbershop):
 
 
 @pytest.mark.django_db
+def test_staff_can_read_barbershop_timezone_but_cannot_edit_settings(barbershop):
+    staff = User.objects.create_user(
+        username="funcionario-fuso",
+        email="funcionario-fuso@example.com",
+        password="Senha123",
+        barbershop=barbershop,
+        role=User.Role.EMPLOYEE,
+    )
+    client = APIClient()
+    client.force_authenticate(staff)
+
+    readable = client.get("/api/v1/barbershop/")
+    blocked = client.patch("/api/v1/barbershop/", {"name": "Não alterar"})
+
+    assert readable.status_code == 200
+    assert readable.data["timezone"] == barbershop.timezone
+    assert blocked.status_code == 403
+
+
+@pytest.mark.django_db
 def test_staff_appointment_dashboard_and_summary(api_client, barbershop, monkeypatch):
     monkeypatch.setattr("apps.appointments.views.send_appointment_confirmation.delay", lambda _id: None)
     customer = Customer.objects.create(barbershop=barbershop, name="Agenda", whatsapp="5511988888888")
@@ -94,6 +115,92 @@ def test_staff_appointment_dashboard_and_summary(api_client, barbershop, monkeyp
     assert cancelled.status_code == 200
     assert cancelled.data["status"] == Appointment.Status.CANCELLED
     assert api_client.post(f"/api/v1/appointments/{appointment_id}/cancel/").status_code == 400
+
+
+@pytest.mark.django_db
+def test_appointment_list_filters_by_tenant_local_day(api_client, barbershop):
+    customer = Customer.objects.create(
+        barbershop=barbershop,
+        name="Filtro diário",
+        whatsapp="5511955555555",
+    )
+    service = Service.objects.create(
+        barbershop=barbershop,
+        name="Serviço diário",
+        price=Decimal("45.00"),
+        duration_minutes=30,
+    )
+    target_start = future_start(barbershop, days=10, hour=10)
+    target = Appointment.objects.create(
+        barbershop=barbershop,
+        customer=customer,
+        service=service,
+        starts_at=target_start,
+        ends_at=target_start + timedelta(minutes=30),
+        duration_minutes=30,
+    )
+    other_start = target_start + timedelta(days=1)
+    other = Appointment.objects.create(
+        barbershop=barbershop,
+        customer=customer,
+        service=service,
+        starts_at=other_start,
+        ends_at=other_start + timedelta(minutes=30),
+        duration_minutes=30,
+    )
+
+    filtered = api_client.get(
+        "/api/v1/appointments/",
+        {"day": target_start.date().isoformat()},
+    )
+
+    assert filtered.status_code == 200
+    assert [item["id"] for item in filtered.data["results"]] == [target.id]
+
+    all_items = api_client.get("/api/v1/appointments/")
+    assert {item["id"] for item in all_items.data["results"]} == {target.id, other.id}
+
+
+@pytest.mark.django_db
+def test_appointment_day_filter_respects_non_default_timezone_boundary(api_client, barbershop):
+    barbershop.timezone = "America/New_York"
+    barbershop.save(update_fields=["timezone", "updated_at"])
+    customer = Customer.objects.create(
+        barbershop=barbershop,
+        name="Fuso",
+        whatsapp="5511955555556",
+    )
+    service = Service.objects.create(
+        barbershop=barbershop,
+        name="Serviço fuso",
+        price=Decimal("45.00"),
+        duration_minutes=30,
+    )
+    local_tz = ZoneInfo(barbershop.timezone)
+    local_day = (datetime.now(local_tz) + timedelta(days=10)).date()
+    late_start = datetime.combine(local_day, time(23, 30), tzinfo=local_tz)
+    next_day_start = datetime.combine(local_day + timedelta(days=1), time(0, 30), tzinfo=local_tz)
+    late = Appointment.objects.create(
+        barbershop=barbershop,
+        customer=customer,
+        service=service,
+        starts_at=late_start,
+        ends_at=late_start + timedelta(minutes=30),
+        duration_minutes=30,
+    )
+    Appointment.objects.create(
+        barbershop=barbershop,
+        customer=customer,
+        service=service,
+        starts_at=next_day_start,
+        ends_at=next_day_start + timedelta(minutes=30),
+        duration_minutes=30,
+    )
+
+    response = api_client.get("/api/v1/appointments/", {"day": local_day.isoformat()})
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.data["results"]] == [late.id]
 
 
 @pytest.mark.django_db

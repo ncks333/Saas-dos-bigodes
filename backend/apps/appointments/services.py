@@ -154,12 +154,30 @@ def available_slots(*, barbershop, day, service: Service) -> list[datetime]:
         return []
     cursor = datetime.combine(day, hours.opens_at, tzinfo=tz)
     close = datetime.combine(day, hours.closes_at, tzinfo=tz)
+    day_start = datetime.combine(day, time.min, tzinfo=tz)
+    appointments = list(Appointment.objects.filter(
+        barbershop=barbershop,
+        status__in=ACTIVE_STATUSES,
+        starts_at__lt=close,
+        ends_at__gt=day_start,
+    ).values_list("starts_at", "ends_at"))
+    blocks = list(ScheduleBlock.objects.filter(
+        barbershop=barbershop,
+        starts_at__lt=close,
+        ends_at__gt=day_start,
+    ).values_list("starts_at", "ends_at"))
+
+    def overlaps(intervals, candidate_start: datetime, candidate_end: datetime) -> bool:
+        return any(
+            interval_start < candidate_end and interval_end > candidate_start
+            for interval_start, interval_end in intervals
+        )
+
+    now = timezone.now()
     slots = []
     while cursor + timedelta(minutes=service.duration_minutes) <= close:
         end = cursor + timedelta(minutes=service.duration_minutes)
-        busy = Appointment.objects.filter(barbershop=barbershop, status__in=ACTIVE_STATUSES, starts_at__lt=end, ends_at__gt=cursor).exists()
-        blocked = ScheduleBlock.objects.filter(barbershop=barbershop, starts_at__lt=end, ends_at__gt=cursor).exists()
-        if cursor > timezone.now() and not busy and not blocked:
+        if cursor > now and not overlaps(appointments, cursor, end) and not overlaps(blocks, cursor, end):
             slots.append(cursor)
         cursor += timedelta(minutes=SLOT_INTERVAL_MINUTES)
     return slots

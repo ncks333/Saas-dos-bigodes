@@ -1,7 +1,7 @@
 from rest_framework import generics, viewsets
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import SAFE_METHODS, AllowAny
 
-from core.permissions.roles import IsAdminRole
+from core.permissions.roles import IsAdminRole, IsTenantMember
 from apps.audit.services import record_event
 from .models import Barbershop, OperatingHour
 from .serializers import BarbershopSerializer, OperatingHourSerializer
@@ -9,7 +9,11 @@ from .serializers import BarbershopSerializer, OperatingHourSerializer
 
 class CurrentBarbershopView(generics.RetrieveUpdateAPIView):
     serializer_class = BarbershopSerializer
-    permission_classes = [IsAdminRole]
+
+    def get_permissions(self):
+        if self.request.method in SAFE_METHODS:
+            return [IsTenantMember()]
+        return [IsAdminRole()]
 
     def get_object(self):
         return self.request.user.barbershop
