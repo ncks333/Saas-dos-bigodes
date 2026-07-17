@@ -210,6 +210,7 @@ test("status da agenda atualiza antes da resposta e não recarrega a lista", asy
   await expect(page.getByLabel("Status")).toHaveValue("CONFIRMADO", {timeout: 1000});
   releasePatch();
   await patchCompleted;
+  await page.waitForTimeout(100);
   expect(listGets).toBe(1);
 });
 

@@ -9,6 +9,7 @@ from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from rest_framework.test import APIClient
 
+from apps.accounts.models import User
 from apps.appointments.models import Appointment
 from apps.customers.models import Customer
 from apps.services.models import Service
@@ -60,6 +61,26 @@ def test_management_crud_and_settings(api_client, barbershop):
     assert invalid_block.status_code == 400
     assert api_client.delete(f"/api/v1/customers/{customer_id}/").status_code == 204
     assert Customer.objects.get(pk=customer_id).active is False
+
+
+@pytest.mark.django_db
+def test_staff_can_read_barbershop_timezone_but_cannot_edit_settings(barbershop):
+    staff = User.objects.create_user(
+        username="funcionario-fuso",
+        email="funcionario-fuso@example.com",
+        password="Senha123",
+        barbershop=barbershop,
+        role=User.Role.EMPLOYEE,
+    )
+    client = APIClient()
+    client.force_authenticate(staff)
+
+    readable = client.get("/api/v1/barbershop/")
+    blocked = client.patch("/api/v1/barbershop/", {"name": "Não alterar"})
+
+    assert readable.status_code == 200
+    assert readable.data["timezone"] == barbershop.timezone
+    assert blocked.status_code == 403
 
 
 @pytest.mark.django_db
