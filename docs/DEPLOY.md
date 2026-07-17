@@ -186,6 +186,32 @@ Após o sucesso, remova imediatamente `INITIAL_ADMIN_PASSWORD` das variáveis Ra
 - Upstash, Railway, Vercel e PostHog possuem limites de gasto/alertas.
 - Cloudflare está em SSL/TLS **Full (strict)** e HTTPS obrigatório.
 
+## 8.1. Smoke test de desempenho antes da demonstração
+
+Depois de cada deploy, meça cinco chamadas sequenciais ao health check e registre
+mediana fria e mediana quente. A primeira chamada após período sem tráfego representa
+o caminho frio; as quatro seguintes representam o serviço aquecido:
+
+```bash
+for i in 1 2 3 4 5; do
+  curl -sS -o /dev/null -w "request=$i status=%{http_code} total=%{time_total}s\n" \
+    https://api.mrbarberhub.com.br/api/v1/health/
+done
+```
+
+No navegador, abra DevTools → Network, filtre `api/v1`, faça login e meça:
+
+- carregamento do dashboard;
+- abertura da agenda do dia;
+- alteração de status;
+- cadastro/edição de cliente.
+
+Uma alteração de status deve produzir um único `PATCH` e não deve baixar novamente a
+coleção completa de agendamentos. Se a API continuar lenta mesmo sem refetch, confira
+no Railway CPU, memória, reinícios e suspensão do serviço web. Confirme também que
+Railway e Supabase usam a mesma região e que o pool de conexões não atingiu o limite.
+Só aumente workers ou plano depois de observar saturação nesses indicadores.
+
 ## 9. Rollback
 
 Vercel e Railway mantêm deployments anteriores. Em falha:
