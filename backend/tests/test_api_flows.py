@@ -97,6 +97,50 @@ def test_staff_appointment_dashboard_and_summary(api_client, barbershop, monkeyp
 
 
 @pytest.mark.django_db
+def test_appointment_list_filters_by_tenant_local_day(api_client, barbershop):
+    customer = Customer.objects.create(
+        barbershop=barbershop,
+        name="Filtro diário",
+        whatsapp="5511955555555",
+    )
+    service = Service.objects.create(
+        barbershop=barbershop,
+        name="Serviço diário",
+        price=Decimal("45.00"),
+        duration_minutes=30,
+    )
+    target_start = future_start(barbershop, days=10, hour=10)
+    target = Appointment.objects.create(
+        barbershop=barbershop,
+        customer=customer,
+        service=service,
+        starts_at=target_start,
+        ends_at=target_start + timedelta(minutes=30),
+        duration_minutes=30,
+    )
+    other_start = target_start + timedelta(days=1)
+    other = Appointment.objects.create(
+        barbershop=barbershop,
+        customer=customer,
+        service=service,
+        starts_at=other_start,
+        ends_at=other_start + timedelta(minutes=30),
+        duration_minutes=30,
+    )
+
+    filtered = api_client.get(
+        "/api/v1/appointments/",
+        {"day": target_start.date().isoformat()},
+    )
+
+    assert filtered.status_code == 200
+    assert [item["id"] for item in filtered.data["results"]] == [target.id]
+
+    all_items = api_client.get("/api/v1/appointments/")
+    assert {item["id"] for item in all_items.data["results"]} == {target.id, other.id}
+
+
+@pytest.mark.django_db
 def test_public_booking_availability_and_cancellation(client, barbershop, monkeypatch):
     monkeypatch.setattr("apps.appointments.views.verify_turnstile", lambda *_args: True)
     monkeypatch.setattr("apps.appointments.views.send_appointment_confirmation.delay", lambda _id: None)

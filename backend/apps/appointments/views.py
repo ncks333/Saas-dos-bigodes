@@ -1,3 +1,6 @@
+from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
+
 from django.db import IntegrityError, transaction
 from django.db.models import Case, Count, IntegerField, Q, Sum, Value, When
 from django.utils import timezone
@@ -78,6 +81,19 @@ class AppointmentViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
     serializer_class = AppointmentSerializer
     filterset_fields = ["status", "source", "starts_at"]
     ordering_fields = ["starts_at", "created_at"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        raw_day = self.request.query_params.get("day")
+        if not raw_day:
+            return queryset
+        day = serializers.DateField().to_internal_value(raw_day)
+        start = datetime.combine(
+            day,
+            time.min,
+            tzinfo=ZoneInfo(self.request.user.barbershop.timezone),
+        )
+        return queryset.filter(starts_at__gte=start, starts_at__lt=start + timedelta(days=1))
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
