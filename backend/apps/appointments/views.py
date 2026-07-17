@@ -118,6 +118,11 @@ class AppointmentViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
         appointment = self.get_object()
         serializer = self.get_serializer(appointment, data=request.data, partial=kwargs.pop("partial", False))
         serializer.is_valid(raise_exception=True)
+        if set(serializer.validated_data) == {"status"}:
+            appointment.status = serializer.validated_data["status"]
+            appointment.save(update_fields=["status", "updated_at"])
+            record_event(request.user, "APPOINTMENT_UPDATED", target=appointment, request=request)
+            return Response(self.get_serializer(appointment).data)
         appointment = update_appointment(appointment=appointment, validated_data=serializer.validated_data)
         record_event(request.user, "APPOINTMENT_UPDATED", target=appointment, request=request)
         return Response(self.get_serializer(appointment).data)

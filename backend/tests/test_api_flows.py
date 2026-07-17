@@ -204,6 +204,30 @@ def test_appointment_day_filter_respects_non_default_timezone_boundary(api_clien
 
 
 @pytest.mark.django_db
+def test_status_update_skips_schedule_lock(api_client, barbershop, monkeypatch):
+    customer = Customer.objects.create(barbershop=barbershop, name="Status", whatsapp="5511977777777")
+    service = Service.objects.create(
+        barbershop=barbershop, name="Corte", price=Decimal("50.00"), duration_minutes=30
+    )
+    start = future_start(barbershop)
+    appointment = Appointment.objects.create(
+        barbershop=barbershop, customer=customer, service=service,
+        starts_at=start, ends_at=start + timedelta(minutes=30), duration_minutes=30,
+    )
+    monkeypatch.setattr(
+        "apps.appointments.services._lock_tenant_schedule",
+        lambda _barbershop_id: pytest.fail("status-only update must not lock the schedule"),
+    )
+
+    response = api_client.patch(
+        f"/api/v1/appointments/{appointment.id}/", {"status": Appointment.Status.CONFIRMED}
+    )
+
+    assert response.status_code == 200
+    assert response.data["status"] == Appointment.Status.CONFIRMED
+
+
+@pytest.mark.django_db
 def test_public_booking_availability_and_cancellation(client, barbershop, monkeypatch):
     monkeypatch.setattr("apps.appointments.views.verify_turnstile", lambda *_args: True)
     monkeypatch.setattr("apps.appointments.views.send_appointment_confirmation.delay", lambda _id: None)
