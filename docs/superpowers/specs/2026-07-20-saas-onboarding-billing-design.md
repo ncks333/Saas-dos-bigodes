@@ -29,7 +29,7 @@ Trocar o acesso direto ao painel por um fluxo comercial completo: o cliente da M
 6. Frontend redireciona para o checkout hospedado.
 7. Cliente informa o cartão no Asaas. O cartão é validado pelo gateway; nenhum dado bruto do cartão passa pelo backend.
 8. Webhook autenticado do Asaas confirma a criação da assinatura e muda a assinatura local para `TRIAL`.
-9. Backend ativa barbearia e usuário; frontend redireciona para login/painel.
+9. Backend ativa o usuário; frontend redireciona para login/painel. A preferência pública `Barbershop.active` continua independente da cobrança.
 
 O callback do navegador serve apenas para experiência de navegação. A ativação financeira depende de webhook; redirecionamento nunca libera acesso sozinho.
 
@@ -47,7 +47,7 @@ TRIAL ──→ ACTIVE ──→ GRACE ──→ SUSPENDED
 - `TRIAL`: acesso completo até `trial_ends_at`; primeira cobrança já agendada.
 - `ACTIVE`: pagamento recorrente confirmado; acesso completo.
 - `GRACE`: pagamento falhou ou ficou vencido; acesso continua por sete dias e e-mails são enviados.
-- `SUSPENDED`: prazo de tolerância acabou; login, painel e agendamento público ficam bloqueados.
+- `SUSPENDED`: prazo de tolerância acabou; login, painel e agendamento público ficam bloqueados pela assinatura.
 - `CANCELED`: assinatura cancelada; acesso bloqueado, dados preservados.
 
 Pagamento confirmado durante `GRACE` retorna para `ACTIVE`. Cancelamento explícito não deve ser confundido com falha temporária de cobrança.
@@ -100,7 +100,17 @@ Na migração, cada `Barbershop` existente recebe uma assinatura `ACTIVE` vincul
 
 O evento é salvo antes do processamento e processado de modo idempotente. Reentrega do mesmo ID não repete ativação, e-mail ou mudança de estado.
 
-Adicionar ao `Barbershop` somente o que for necessário para o gate comercial; o estado financeiro fica em `Subscription`. `Barbershop.active` controla disponibilidade pública, enquanto `Subscription.status` controla acesso comercial.
+### `BillingNotificationLog`
+
+- relação com `Subscription`.
+- `kind`: tipo estável da notificação.
+- `status`: `PENDING`, `SENT` ou `FAILED`.
+- `sent_at`.
+- unicidade por assinatura e tipo de notificação.
+
+O registro funciona como chave de idempotência dos e-mails. Uma repetição de webhook ou da tarefa periódica não envia novamente a mesma notificação de ciclo.
+
+O estado financeiro fica em `Subscription`. `Barbershop.active` continua sendo a preferência do dono para ligar ou desligar o agendamento público e nunca é sobrescrito por cobrança. Disponibilidade pública exige simultaneamente `Barbershop.active=True` e assinatura em `TRIAL`, `ACTIVE` ou `GRACE`.
 
 ## Integração Asaas
 
@@ -111,7 +121,7 @@ Criar um adaptador isolado em `apps.billing.providers.asaas` usando API HTTP exi
 - `parse_webhook(...) -> ProviderEvent`.
 - `create_regularization_checkout(...) -> CheckoutResult`.
 
-O checkout usa `chargeTypes: ["RECURRENT"]`, `billingTypes: ["CREDIT_CARD"]`, item com preço vindo do plano e `subscription.nextDueDate` igual ao início da primeira cobrança. `externalReference` relaciona Asaas à assinatura local.
+O checkout usa `chargeTypes: ["RECURRENT"]`, `billingTypes: ["CREDIT_CARD"]`, item com preço vindo do plano e `subscription.nextDueDate` igual ao dia seguinte ao fim do trial. `externalReference` relaciona Asaas à assinatura local.
 
 Segredos ficam somente em variáveis de ambiente: URL, API key e token de webhook. O sistema valida o token do webhook, responde rapidamente e processa eventos de forma idempotente. O fluxo deve ser testado primeiro no Sandbox do Asaas.
 
