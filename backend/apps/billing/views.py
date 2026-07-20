@@ -4,7 +4,6 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.audit.services import record_event
 from core.security.turnstile import verify_turnstile
 
 from .models import SubscriptionPlan
@@ -47,13 +46,13 @@ class SignupView(APIView):
         if plan is None:
             raise serializers.ValidationError({"plan_code": "Plano indisponível."})
         try:
-            subscription, checkout = provision_signup(serializer.validated_data, plan)
+            subscription, checkout = provision_signup(
+                serializer.validated_data,
+                plan,
+                request=request,
+            )
         except AsaasCheckoutError as exc:
             raise ProviderUnavailable() from exc
-        user = subscription.barbershop.users.get(role="ADMIN")
-        record_event(
-            user, "BILLING_SIGNUP_CREATED", target=subscription, request=request
-        )
         return Response(
             {
                 "checkout_url": checkout.url,

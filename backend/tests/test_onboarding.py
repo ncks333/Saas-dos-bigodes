@@ -2,6 +2,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 import pytest
+from django.db import DatabaseError
 from django.utils import timezone
 
 from apps.accounts.models import User
@@ -127,6 +128,11 @@ def test_provider_failure_returns_503_and_rolls_back_local_tenant(
     client, plan, monkeypatch
 ):
     monkeypatch.setattr("apps.billing.views.verify_turnstile", lambda *_args: True)
+    canceled_checkouts = []
+    monkeypatch.setattr(
+        "apps.billing.services.cancel_checkout",
+        lambda checkout_id: canceled_checkouts.append(checkout_id),
+    )
     monkeypatch.setattr(
         "apps.billing.services.create_recurring_checkout",
         lambda *_args: (_ for _ in ()).throw(AsaasCheckoutError("Asaas indisponível")),
@@ -137,6 +143,70 @@ def test_provider_failure_returns_503_and_rolls_back_local_tenant(
     )
 
     assert response.status_code == 503
+    assert Barbershop.objects.count() == 0
+    assert User.objects.count() == 0
+    assert Subscription.objects.count() == 0
+    assert OperatingHour.objects.count() == 0
+    assert AuditEvent.objects.count() == 0
+    assert canceled_checkouts == []
+
+
+@pytest.mark.django_db
+def test_audit_failure_prevents_provider_call_and_rolls_back_tenant(
+    client, plan, monkeypatch
+):
+    monkeypatch.setattr("apps.billing.views.verify_turnstile", lambda *_args: True)
+    monkeypatch.setattr(
+        "apps.audit.services.record_event",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("audit failed")),
+    )
+    monkeypatch.setattr(
+        "apps.billing.services.create_recurring_checkout",
+        lambda *_args: pytest.fail("provider must not run after audit failure"),
+    )
+
+    with pytest.raises(RuntimeError, match="audit failed"):
+        client.post(
+            "/api/v1/billing/signup/", signup_payload(), content_type="application/json"
+        )
+
+    assert Barbershop.objects.count() == 0
+    assert User.objects.count() == 0
+    assert Subscription.objects.count() == 0
+    assert OperatingHour.objects.count() == 0
+    assert AuditEvent.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_local_failure_after_checkout_cancels_remote_checkout_and_rolls_back_tenant(
+    client, plan, monkeypatch
+):
+    original_save = Subscription.save
+    canceled_checkouts = []
+    monkeypatch.setattr("apps.billing.views.verify_turnstile", lambda *_args: True)
+    monkeypatch.setattr(
+        "apps.billing.services.create_recurring_checkout",
+        lambda *_args: CheckoutResult(id="chk_1", url="https://asaas.test/chk_1"),
+    )
+    monkeypatch.setattr(
+        "apps.billing.services.cancel_checkout",
+        lambda checkout_id: canceled_checkouts.append(checkout_id),
+        raising=False,
+    )
+
+    def fail_provider_checkout_save(self, *args, **kwargs):
+        if "provider_checkout_id" in kwargs.get("update_fields", []):
+            raise DatabaseError("local persistence failed")
+        return original_save(self, *args, **kwargs)
+
+    monkeypatch.setattr(Subscription, "save", fail_provider_checkout_save)
+
+    with pytest.raises(DatabaseError, match="local persistence failed"):
+        client.post(
+            "/api/v1/billing/signup/", signup_payload(), content_type="application/json"
+        )
+
+    assert canceled_checkouts == ["chk_1"]
     assert Barbershop.objects.count() == 0
     assert User.objects.count() == 0
     assert Subscription.objects.count() == 0

@@ -26,12 +26,14 @@ def _create_checkout(subscription, user, next_due_date) -> CheckoutResult:
             "cancelUrl": f"{settings.FRONTEND_URL.rstrip('/')}/checkout/cancelado",
             "expiredUrl": f"{settings.FRONTEND_URL.rstrip('/')}/checkout/expirado",
         },
-        "items": [{
-            "name": subscription.plan.name,
-            "description": "Assinatura mensal M&R BarberHub",
-            "quantity": 1,
-            "value": float(subscription.plan.amount),
-        }],
+        "items": [
+            {
+                "name": subscription.plan.name,
+                "description": "Assinatura mensal M&R BarberHub",
+                "quantity": 1,
+                "value": float(subscription.plan.amount),
+            }
+        ],
         "customerData": {
             "name": user.get_full_name() or user.username,
             "email": user.email,
@@ -57,9 +59,19 @@ def _create_checkout(subscription, user, next_due_date) -> CheckoutResult:
     except requests.RequestException:
         raise AsaasCheckoutError("Falha ao criar checkout Asaas") from None
 
-    data = response.json()
-    checkout_id = data["id"]
-    url = data.get("link") or f"{settings.ASAAS_CHECKOUT_BASE_URL}?id={checkout_id}"
+    try:
+        data = response.json()
+    except (TypeError, ValueError):
+        raise AsaasCheckoutError("Resposta inválida ao criar checkout Asaas") from None
+    if not isinstance(data, dict):
+        raise AsaasCheckoutError("Resposta inválida ao criar checkout Asaas")
+    checkout_id = data.get("id")
+    if not isinstance(checkout_id, str) or not checkout_id.strip():
+        raise AsaasCheckoutError("Resposta inválida ao criar checkout Asaas")
+    link = data.get("link")
+    if link is not None and not isinstance(link, str):
+        raise AsaasCheckoutError("Resposta inválida ao criar checkout Asaas")
+    url = link or f"{settings.ASAAS_CHECKOUT_BASE_URL}?id={checkout_id}"
     return CheckoutResult(id=checkout_id, url=url)
 
 
@@ -69,3 +81,18 @@ def create_recurring_checkout(subscription, user) -> CheckoutResult:
 
 def create_regularization_checkout(subscription, user) -> CheckoutResult:
     return _create_checkout(subscription, user, timezone.now())
+
+
+def cancel_checkout(checkout_id: str) -> None:
+    try:
+        response = requests.post(
+            f"{settings.ASAAS_API_URL.rstrip('/')}/checkouts/{checkout_id}/cancel",
+            headers={
+                "accept": "application/json",
+                "access_token": settings.ASAAS_API_KEY,
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+    except requests.RequestException:
+        raise AsaasCheckoutError("Falha ao cancelar checkout Asaas") from None
