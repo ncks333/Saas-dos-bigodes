@@ -3,6 +3,7 @@ from django.core.management import call_command
 
 from apps.accounts.models import User
 from apps.barbershops.models import Barbershop, OperatingHour
+from apps.billing.models import Subscription, SubscriptionPlan
 
 
 @pytest.mark.django_db
@@ -23,3 +24,7 @@ def test_create_tenant_admin_bootstraps_production_tenant(monkeypatch):
     assert user.role == User.Role.ADMIN
     assert user.check_password("SenhaInicial789")
     assert OperatingHour.objects.filter(barbershop=shop).count() == 6
+    assert SubscriptionPlan.objects.filter(
+        code="barberhub", name="BarberHub", amount="79.90", trial_days=30
+    ).exists()
+    assert shop.subscription.status == Subscription.Status.ACTIVE

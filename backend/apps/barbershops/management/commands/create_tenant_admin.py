@@ -1,5 +1,6 @@
 import os
 from datetime import time
+from decimal import Decimal
 
 from django.contrib.auth.password_validation import validate_password
 from django.core.management.base import BaseCommand, CommandError
@@ -7,6 +8,7 @@ from django.db import transaction
 
 from apps.accounts.models import User
 from apps.barbershops.models import Barbershop, OperatingHour
+from apps.billing.models import Subscription, SubscriptionPlan
 
 
 class Command(BaseCommand):
@@ -29,6 +31,11 @@ class Command(BaseCommand):
             raise CommandError("Este usuário já existe; nenhuma alteração foi feita.")
 
         shop = Barbershop.objects.create(name=options["shop_name"], slug=options["slug"])
+        plan, _ = SubscriptionPlan.objects.get_or_create(
+            code="barberhub",
+            defaults={"name": "BarberHub", "amount": Decimal("79.90"), "trial_days": 30},
+        )
+        Subscription.objects.create(barbershop=shop, plan=plan, status=Subscription.Status.ACTIVE)
         for weekday in range(6):
             OperatingHour.objects.create(
                 barbershop=shop,
