@@ -1,0 +1,71 @@
+from dataclasses import dataclass
+
+import requests
+from django.conf import settings
+from django.utils import timezone
+
+
+class AsaasCheckoutError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class CheckoutResult:
+    id: str
+    url: str
+
+
+def _create_checkout(subscription, user, next_due_date) -> CheckoutResult:
+    payload = {
+        "billingTypes": ["CREDIT_CARD"],
+        "chargeTypes": ["RECURRENT"],
+        "minutesToExpire": settings.ASAAS_CHECKOUT_EXPIRES_MINUTES,
+        "externalReference": str(subscription.external_reference),
+        "callback": {
+            "successUrl": f"{settings.FRONTEND_URL.rstrip('/')}/checkout/concluido",
+            "cancelUrl": f"{settings.FRONTEND_URL.rstrip('/')}/checkout/cancelado",
+            "expiredUrl": f"{settings.FRONTEND_URL.rstrip('/')}/checkout/expirado",
+        },
+        "items": [{
+            "name": subscription.plan.name,
+            "description": "Assinatura mensal M&R BarberHub",
+            "quantity": 1,
+            "value": float(subscription.plan.amount),
+        }],
+        "customerData": {
+            "name": user.get_full_name() or user.username,
+            "email": user.email,
+            "phone": subscription.barbershop.whatsapp,
+        },
+        "subscription": {
+            "cycle": "MONTHLY",
+            "nextDueDate": next_due_date.date().isoformat(),
+        },
+    }
+    try:
+        response = requests.post(
+            f"{settings.ASAAS_API_URL.rstrip('/')}/checkouts",
+            json=payload,
+            headers={
+                "accept": "application/json",
+                "content-type": "application/json",
+                "access_token": settings.ASAAS_API_KEY,
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+    except requests.RequestException:
+        raise AsaasCheckoutError("Falha ao criar checkout Asaas") from None
+
+    data = response.json()
+    checkout_id = data["id"]
+    url = data.get("link") or f"{settings.ASAAS_CHECKOUT_BASE_URL}?id={checkout_id}"
+    return CheckoutResult(id=checkout_id, url=url)
+
+
+def create_recurring_checkout(subscription, user) -> CheckoutResult:
+    return _create_checkout(subscription, user, subscription.next_billing_at)
+
+
+def create_regularization_checkout(subscription, user) -> CheckoutResult:
+    return _create_checkout(subscription, user, timezone.now())

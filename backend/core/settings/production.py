@@ -20,6 +20,12 @@ if EMAIL_BACKEND == "core.email_backends.ResendEmailBackend" and not RESEND_API_
     raise RuntimeError("RESEND_API_KEY deve ser configurada para o backend Resend")
 if not FRONTEND_URL.startswith("https://"):  # noqa: F405
     raise RuntimeError("FRONTEND_URL deve usar HTTPS em produção")
+if not ASAAS_API_KEY:  # noqa: F405
+    raise RuntimeError("ASAAS_API_KEY deve ser configurada em produção")
+if not ASAAS_API_URL.startswith("https://"):  # noqa: F405
+    raise RuntimeError("ASAAS_API_URL deve usar HTTPS em produção")
+if not ASAAS_CHECKOUT_BASE_URL.startswith("https://"):  # noqa: F405
+    raise RuntimeError("ASAAS_CHECKOUT_BASE_URL deve usar HTTPS em produção")
 if not all((
     WHATSAPP_GRAPH_API_VERSION, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_ACCESS_TOKEN,
     WHATSAPP_TEMPLATE_LANGUAGE, WHATSAPP_CONFIRMATION_TEMPLATE, WHATSAPP_REMINDER_TEMPLATE,
