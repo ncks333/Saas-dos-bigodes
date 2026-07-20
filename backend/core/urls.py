@@ -25,7 +25,7 @@ from apps.barbershops.views import (
     OperatingHourViewSet,
     PublicBarbershopView,
 )
-from apps.billing.views import PublicPlanView, SignupView
+from apps.billing.views import AsaasWebhookView, PublicPlanView, SignupView
 from apps.customers.views import CustomerViewSet
 from apps.reports.views import DashboardView
 from apps.services.views import PublicServiceListView, ServiceViewSet
@@ -55,6 +55,7 @@ urlpatterns = [
     path("api/v1/dashboard/", DashboardView.as_view()),
     path("api/v1/billing/plans/current/", PublicPlanView.as_view()),
     path("api/v1/billing/signup/", SignupView.as_view()),
+    path("api/v1/billing/webhooks/asaas/", AsaasWebhookView.as_view()),
     path("api/v1/public/cancel/", PublicCancellationView.as_view()),
     path("api/v1/public/<slug:slug>/", PublicBarbershopView.as_view()),
     path("api/v1/public/<slug:slug>/services/", PublicServiceListView.as_view()),
