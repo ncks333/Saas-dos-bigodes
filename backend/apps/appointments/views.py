@@ -15,6 +15,7 @@ from rest_framework.views import APIView
 
 from apps.audit.services import record_event
 from apps.barbershops.models import Barbershop
+from apps.billing.access import barbershops_with_access
 from apps.customers.models import Customer
 from apps.notifications.tasks import send_appointment_confirmation
 from apps.services.models import Service
@@ -168,7 +169,9 @@ class AvailabilityView(APIView):
             query = AvailabilityQuery.model_validate(request.query_params.dict())
         except PydanticValidationError as exc:
             raise serializers.ValidationError(exc.errors())
-        barbershop = Barbershop.objects.filter(slug=slug, active=True).first()
+        barbershop = barbershops_with_access(
+            Barbershop.objects.filter(slug=slug, active=True)
+        ).first()
         service = Service.objects.filter(pk=query.service_id, barbershop=barbershop, active=True).first()
         if not barbershop or not service:
             raise serializers.ValidationError("Barbearia ou serviço inválido.")
@@ -187,7 +190,9 @@ class PublicBookingView(APIView):
             raise serializers.ValidationError(exc.errors())
         if not verify_turnstile(payload.captcha_token, request.META.get("REMOTE_ADDR")):
             raise serializers.ValidationError("Verificação anti-bot inválida.")
-        barbershop = Barbershop.objects.filter(slug=slug, active=True).first()
+        barbershop = barbershops_with_access(
+            Barbershop.objects.filter(slug=slug, active=True)
+        ).first()
         if not barbershop:
             raise serializers.ValidationError("Barbearia inválida.")
         customer, _ = _get_or_create_public_customer(

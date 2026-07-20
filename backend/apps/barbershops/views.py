@@ -1,6 +1,7 @@
 from rest_framework import generics, viewsets
 from rest_framework.permissions import SAFE_METHODS, AllowAny
 
+from apps.billing.access import barbershops_with_access
 from core.permissions.roles import IsAdminRole, IsTenantMember
 from apps.audit.services import record_event
 from .models import Barbershop, OperatingHour
@@ -35,7 +36,7 @@ class OperatingHourViewSet(viewsets.ModelViewSet):
 
 
 class PublicBarbershopView(generics.RetrieveAPIView):
-    queryset = Barbershop.objects.filter(active=True)
+    queryset = barbershops_with_access(Barbershop.objects.filter(active=True))
     serializer_class = BarbershopSerializer
     permission_classes = [AllowAny]
     lookup_field = "slug"
