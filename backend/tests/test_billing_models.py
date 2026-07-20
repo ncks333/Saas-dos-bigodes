@@ -55,6 +55,19 @@ def test_grace_deadline_is_preserved_by_duplicate_start(subscription):
     assert subscription.grace_ends_at == original_deadline
 
 
+@pytest.mark.django_db
+def test_grace_deadline_resets_after_reactivation(subscription):
+    start = timezone.now()
+    subscription.start_grace(start)
+    subscription.status = Subscription.Status.ACTIVE
+    next_cycle_start = start + timedelta(days=2)
+
+    subscription.start_grace(next_cycle_start)
+
+    assert subscription.status == Subscription.Status.GRACE
+    assert subscription.grace_ends_at == next_cycle_start + timedelta(days=7)
+
+
 @pytest.mark.django_db(transaction=True)
 def test_initial_migration_backfills_existing_barbershops():
     executor = MigrationExecutor(connection)
