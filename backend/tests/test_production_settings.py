@@ -26,6 +26,7 @@ def production_environment(**overrides):
         "ASAAS_API_KEY": "asaas-production-token",
         "ASAAS_API_URL": "https://api.asaas.com/v3",
         "ASAAS_CHECKOUT_BASE_URL": "https://www.asaas.com/checkoutSession/show",
+        "ASAAS_WEBHOOK_TOKEN": "asaas-webhook-test-token",
     }
     environment.update(overrides)
     return environment
@@ -47,6 +48,13 @@ def test_production_settings_require_asaas_api_key():
 
     assert result.returncode != 0
     assert "ASAAS_API_KEY" in result.stderr
+
+
+def test_production_settings_require_asaas_webhook_token():
+    result = import_production_settings(ASAAS_WEBHOOK_TOKEN="")
+
+    assert result.returncode != 0
+    assert "ASAAS_WEBHOOK_TOKEN" in result.stderr
 
 
 def test_production_settings_require_https_asaas_urls():

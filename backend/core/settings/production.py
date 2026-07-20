@@ -22,6 +22,8 @@ if not FRONTEND_URL.startswith("https://"):  # noqa: F405
     raise RuntimeError("FRONTEND_URL deve usar HTTPS em produção")
 if not ASAAS_API_KEY:  # noqa: F405
     raise RuntimeError("ASAAS_API_KEY deve ser configurada em produção")
+if not ASAAS_WEBHOOK_TOKEN:  # noqa: F405
+    raise RuntimeError("ASAAS_WEBHOOK_TOKEN deve ser configurada em produção")
 if not ASAAS_API_URL.startswith("https://"):  # noqa: F405
     raise RuntimeError("ASAAS_API_URL deve usar HTTPS em produção")
 if not ASAAS_CHECKOUT_BASE_URL.startswith("https://"):  # noqa: F405
