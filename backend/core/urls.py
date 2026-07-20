@@ -3,10 +3,29 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from apps.accounts.views import ChangePasswordView, LoginView, LogoutAllView, LogoutView, PasswordResetConfirmView, PasswordResetRequestView, UserViewSet
-from apps.appointments.views import AppointmentViewSet, AvailabilityView, PublicBookingView, PublicCancellationView, ScheduleBlockViewSet
+from apps.accounts.views import (
+    ChangePasswordView,
+    LoginView,
+    LogoutAllView,
+    LogoutView,
+    PasswordResetConfirmView,
+    PasswordResetRequestView,
+    UserViewSet,
+)
+from apps.appointments.views import (
+    AppointmentViewSet,
+    AvailabilityView,
+    PublicBookingView,
+    PublicCancellationView,
+    ScheduleBlockViewSet,
+)
 from apps.appointments.agent_views import AgentToolViewSet
-from apps.barbershops.views import CurrentBarbershopView, OperatingHourViewSet, PublicBarbershopView
+from apps.barbershops.views import (
+    CurrentBarbershopView,
+    OperatingHourViewSet,
+    PublicBarbershopView,
+)
+from apps.billing.views import PublicPlanView, SignupView
 from apps.customers.views import CustomerViewSet
 from apps.reports.views import DashboardView
 from apps.services.views import PublicServiceListView, ServiceViewSet
@@ -34,6 +53,8 @@ urlpatterns = [
     path("api/v1/auth/password-reset/confirm/", PasswordResetConfirmView.as_view()),
     path("api/v1/barbershop/", CurrentBarbershopView.as_view()),
     path("api/v1/dashboard/", DashboardView.as_view()),
+    path("api/v1/billing/plans/current/", PublicPlanView.as_view()),
+    path("api/v1/billing/signup/", SignupView.as_view()),
     path("api/v1/public/cancel/", PublicCancellationView.as_view()),
     path("api/v1/public/<slug:slug>/", PublicBarbershopView.as_view()),
     path("api/v1/public/<slug:slug>/services/", PublicServiceListView.as_view()),
