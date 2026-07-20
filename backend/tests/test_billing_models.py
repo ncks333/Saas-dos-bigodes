@@ -43,6 +43,18 @@ def test_grace_deadline_is_seven_days(subscription):
     assert subscription.grace_ends_at == start + timedelta(days=7)
 
 
+@pytest.mark.django_db
+def test_grace_deadline_is_preserved_by_duplicate_start(subscription):
+    start = timezone.now()
+    subscription.start_grace(start)
+    original_deadline = subscription.grace_ends_at
+
+    subscription.start_grace(start + timedelta(days=1))
+
+    assert subscription.status == Subscription.Status.GRACE
+    assert subscription.grace_ends_at == original_deadline
+
+
 @pytest.mark.django_db(transaction=True)
 def test_initial_migration_backfills_existing_barbershops():
     executor = MigrationExecutor(connection)

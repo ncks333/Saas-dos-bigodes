@@ -60,7 +60,8 @@ class Subscription(TimestampedModel):
 
     def start_grace(self, now):
         self.status = self.Status.GRACE
-        self.grace_ends_at = now + timedelta(days=7)
+        if self.grace_ends_at is None:
+            self.grace_ends_at = now + timedelta(days=7)
 
 
 class BillingWebhookEvent(TimestampedModel):
