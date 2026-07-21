@@ -267,7 +267,9 @@ def test_webhook_email_enqueues_only_after_successful_transaction(
 
     process_billing_webhook.run(event.id)
 
-    assert queued == [(pending_subscription.id, "TRIAL_ACTIVATED")]
+    assert queued == [
+        (pending_subscription.id, "TRIAL_ACTIVATED", "evt_notification_checkout")
+    ]
 
 
 def test_lifecycle_sweep_has_hourly_beat_schedule(settings):

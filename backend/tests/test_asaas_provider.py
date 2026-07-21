@@ -9,6 +9,8 @@ from django.utils import timezone
 from apps.billing.providers import asaas
 from apps.billing.providers.asaas import (
     AsaasCheckoutError,
+    AsaasCheckoutNotCreatedError,
+    AsaasCheckoutOutcomeUnknownError,
     create_recurring_checkout,
     create_regularization_checkout,
 )
@@ -150,6 +152,36 @@ def test_checkout_error_does_not_expose_api_key(monkeypatch, subscription, user)
         create_regularization_checkout(subscription, user)
 
     assert "asaas-test-token" not in str(exc_info.value)
+
+
+@pytest.mark.django_db
+@override_settings(**ASAAS_SETTINGS)
+def test_checkout_timeout_has_unknown_creation_outcome(monkeypatch, subscription, user):
+    monkeypatch.setattr(
+        "apps.billing.providers.asaas.requests.post",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(requests.Timeout()),
+    )
+
+    with pytest.raises(AsaasCheckoutOutcomeUnknownError):
+        create_regularization_checkout(subscription, user)
+
+
+@pytest.mark.django_db
+@override_settings(**ASAAS_SETTINGS)
+def test_checkout_validation_failure_is_definitely_not_created(
+    monkeypatch, subscription, user
+):
+    response = type("Response", (), {"status_code": 422})()
+    response.raise_for_status = lambda: (_ for _ in ()).throw(
+        requests.HTTPError(response=response)
+    )
+    monkeypatch.setattr(
+        "apps.billing.providers.asaas.requests.post",
+        lambda *_args, **_kwargs: response,
+    )
+
+    with pytest.raises(AsaasCheckoutNotCreatedError):
+        create_regularization_checkout(subscription, user)
 
 
 @pytest.mark.django_db

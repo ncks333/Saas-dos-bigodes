@@ -37,6 +37,7 @@ class Subscription(TimestampedModel):
         CREATING = "CREATING", "Criando"
         CREATED = "CREATED", "Criado"
         PAID = "PAID", "Pago"
+        RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED", "Reconciliação necessária"
 
     barbershop = models.OneToOneField("barbershops.Barbershop", on_delete=models.CASCADE, related_name="subscription")
     plan = models.ForeignKey(SubscriptionPlan, on_delete=models.PROTECT, related_name="subscriptions")
@@ -46,13 +47,14 @@ class Subscription(TimestampedModel):
     provider_subscription_id = models.CharField(max_length=100, blank=True, db_index=True)
     provider_checkout_id = models.CharField(max_length=100, blank=True)
     regularization_checkout_state = models.CharField(
-        max_length=16,
+        max_length=24,
         choices=RegularizationCheckoutState.choices,
         default=RegularizationCheckoutState.READY,
     )
     regularization_checkout_claim = models.UUIDField(null=True, blank=True, editable=False)
     regularization_checkout_id = models.CharField(max_length=100, blank=True)
     regularization_checkout_url = models.URLField(max_length=500, blank=True)
+    regularization_checkout_error = models.CharField(max_length=100, blank=True)
     external_reference = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     trial_days = models.PositiveSmallIntegerField(default=30)
     trial_ends_at = models.DateTimeField(null=True, blank=True)
@@ -133,10 +135,16 @@ class BillingWebhookEvent(TimestampedModel):
 class BillingNotificationLog(TimestampedModel):
     subscription = models.ForeignKey(Subscription, on_delete=models.CASCADE, related_name="notification_logs")
     kind = models.CharField(max_length=50)
+    dedupe_key = models.CharField(max_length=180, blank=True, default="")
     status = models.CharField(max_length=20, default="PENDING")
     claim_token = models.UUIDField(null=True, blank=True, editable=False)
     email_snapshot = models.JSONField(null=True, blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["subscription", "kind"], name="unique_billing_notification_kind")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["subscription", "kind", "dedupe_key"],
+                name="unique_billing_notification_dedupe",
+            )
+        ]

@@ -292,10 +292,11 @@ def _billing_email_snapshot(notification_id, claim_token):
         return notification.email_snapshot
 
 
-def _notification_log(subscription_id, kind):
+def _notification_log(subscription_id, kind, dedupe_key=""):
     notification = BillingNotificationLog.objects.filter(
         subscription_id=subscription_id,
         kind=kind,
+        dedupe_key=dedupe_key,
     ).first()
     if notification is not None:
         return notification
@@ -304,26 +305,33 @@ def _notification_log(subscription_id, kind):
             return BillingNotificationLog.objects.create(
                 subscription_id=subscription_id,
                 kind=kind,
+                dedupe_key=dedupe_key,
             )
     except IntegrityError:
         return BillingNotificationLog.objects.get(
             subscription_id=subscription_id,
             kind=kind,
+            dedupe_key=dedupe_key,
         )
 
 
-def _enqueue_billing_email_after_commit(subscription_id, kind):
-    notification = _notification_log(subscription_id, kind)
+def _enqueue_billing_email_after_commit(subscription_id, kind, dedupe_key=""):
+    notification = _notification_log(subscription_id, kind, dedupe_key)
     if notification.status == "SENT":
         return
-    transaction.on_commit(lambda: send_billing_email.delay(subscription_id, kind))
+    if dedupe_key:
+        transaction.on_commit(
+            lambda: send_billing_email.delay(subscription_id, kind, dedupe_key)
+        )
+    else:
+        transaction.on_commit(lambda: send_billing_email.delay(subscription_id, kind))
 
 
 @shared_task
-def send_billing_email(subscription_id, kind):
+def send_billing_email(subscription_id, kind, dedupe_key=""):
     if kind not in BILLING_EMAIL_TEMPLATES:
         raise ValueError(f"Unknown billing email kind: {kind}")
-    notification = _notification_log(subscription_id, kind)
+    notification = _notification_log(subscription_id, kind, dedupe_key)
     claim_token = uuid4()
     claimed = BillingNotificationLog.objects.filter(
         pk=notification.pk,
@@ -452,6 +460,7 @@ def process_billing_webhook(event_id):
                 _enqueue_billing_email_after_commit(
                     _event_subscription(event).id,
                     notification_kind,
+                    event.provider_event_id,
                 )
             event.processed_at = processed_at
             event.processing_error = ""
@@ -513,7 +522,7 @@ def _prepare_billing_notification_recovery(notification_id, *, now):
             )
         elif notification.status not in {"PENDING", "FAILED"}:
             return None
-        return notification.subscription_id, notification.kind
+        return notification.subscription_id, notification.kind, notification.dedupe_key
 
 
 @shared_task
@@ -536,7 +545,10 @@ def recover_billing_notification_emails():
         if dispatch is None:
             continue
         try:
-            send_billing_email.delay(*dispatch)
+            if dispatch[2]:
+                send_billing_email.delay(*dispatch)
+            else:
+                send_billing_email.delay(*dispatch[:2])
         except Exception:
             continue
         dispatched_count += 1

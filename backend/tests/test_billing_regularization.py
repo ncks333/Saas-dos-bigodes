@@ -5,11 +5,18 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from django.core.cache import cache
 from django.core import mail
+from django.core.management import call_command
 from django.core.signing import TimestampSigner
 
 from apps.accounts.models import User
+from apps.audit.models import AuditEvent
 from apps.billing.models import Subscription
 from apps.billing.providers.asaas import CheckoutResult
+from apps.billing.providers.asaas import (
+    AsaasCheckoutError,
+    AsaasCheckoutNotCreatedError,
+    AsaasCheckoutOutcomeUnknownError,
+)
 from apps.billing.services import provision_regularization_checkout
 from apps.billing.tasks import send_regularization_request_email
 
@@ -300,6 +307,153 @@ def test_regularization_checkout_cancels_provider_checkout_when_persistence_fail
         provision_regularization_checkout(subscription)
 
     assert canceled == ["chk_compensate"]
+    subscription.refresh_from_db()
+    assert subscription.regularization_checkout_state == "READY"
+
+
+@pytest.mark.django_db
+def test_uncertain_regularization_checkout_failure_requires_reconciliation_and_no_retry(
+    subscription, user, monkeypatch
+):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.save(update_fields=["status", "updated_at"])
+    calls = []
+
+    def timeout(*_args):
+        calls.append(True)
+        raise AsaasCheckoutOutcomeUnknownError("timeout")
+
+    monkeypatch.setattr(
+        "apps.billing.services.create_regularization_checkout", timeout
+    )
+
+    with pytest.raises(AsaasCheckoutError):
+        provision_regularization_checkout(subscription)
+    with pytest.raises(AsaasCheckoutError):
+        provision_regularization_checkout(subscription)
+
+    subscription.refresh_from_db()
+    assert subscription.regularization_checkout_state == "RECONCILIATION_REQUIRED"
+    assert subscription.regularization_checkout_error == "AsaasCheckoutOutcomeUnknownError"
+    assert calls == [True]
+
+
+@pytest.mark.django_db
+def test_definitely_not_created_regularization_checkout_returns_to_ready(
+    subscription, user, monkeypatch
+):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.save(update_fields=["status", "updated_at"])
+    monkeypatch.setattr(
+        "apps.billing.services.create_regularization_checkout",
+        lambda *_args: (_ for _ in ()).throw(
+            AsaasCheckoutNotCreatedError("validation failed")
+        ),
+    )
+
+    with pytest.raises(AsaasCheckoutNotCreatedError):
+        provision_regularization_checkout(subscription)
+
+    subscription.refresh_from_db()
+    assert subscription.regularization_checkout_state == "READY"
+
+
+@pytest.mark.django_db
+def test_compensation_failure_requires_reconciliation_and_no_retry(
+    subscription, user, monkeypatch
+):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.save(update_fields=["status", "updated_at"])
+    provider_calls = []
+    monkeypatch.setattr(
+        "apps.billing.services.create_regularization_checkout",
+        lambda *_args: provider_calls.append(True)
+        or CheckoutResult(id="chk_uncertain", url="https://asaas.test/uncertain"),
+    )
+    monkeypatch.setattr(
+        "apps.billing.services._persist_regularization_checkout",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("database unavailable")),
+    )
+    monkeypatch.setattr(
+        "apps.billing.services.cancel_checkout",
+        lambda *_args: (_ for _ in ()).throw(AsaasCheckoutError("cancel timeout")),
+    )
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        provision_regularization_checkout(subscription)
+    with pytest.raises(AsaasCheckoutError):
+        provision_regularization_checkout(subscription)
+
+    subscription.refresh_from_db()
+    assert subscription.regularization_checkout_state == "RECONCILIATION_REQUIRED"
+    assert subscription.regularization_checkout_error == "RuntimeError"
+    assert provider_calls == [True]
+
+
+@pytest.mark.django_db
+def test_reconciliation_command_attaches_verified_checkout(subscription):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.regularization_checkout_state = "CREATING"
+    subscription.regularization_checkout_claim = uuid4()
+    subscription.save(
+        update_fields=[
+            "status",
+            "regularization_checkout_state",
+            "regularization_checkout_claim",
+            "updated_at",
+        ]
+    )
+
+    call_command(
+        "reconcile_regularization_checkout",
+        subscription_id=subscription.id,
+        verified_checkout_id="chk_verified",
+        verified_checkout_url="https://asaas.test/verified",
+    )
+
+    subscription.refresh_from_db()
+    assert subscription.regularization_checkout_state == "CREATED"
+    assert subscription.regularization_checkout_id == "chk_verified"
+    assert subscription.regularization_checkout_url == "https://asaas.test/verified"
+    assert subscription.regularization_checkout_claim is None
+    assert AuditEvent.objects.filter(
+        barbershop=subscription.barbershop,
+        action="BILLING_REGULARIZATION_CHECKOUT_ATTACHED",
+        target_id=str(subscription.id),
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_reconciliation_command_resets_claim_only_with_explicit_confirmation(subscription):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.regularization_checkout_state = "RECONCILIATION_REQUIRED"
+    subscription.regularization_checkout_claim = uuid4()
+    subscription.regularization_checkout_error = "AsaasCheckoutError"
+    subscription.save(
+        update_fields=[
+            "status",
+            "regularization_checkout_state",
+            "regularization_checkout_claim",
+            "regularization_checkout_error",
+            "updated_at",
+        ]
+    )
+
+    call_command(
+        "reconcile_regularization_checkout",
+        subscription_id=subscription.id,
+        reset_confirmed_no_active_checkout=True,
+    )
+
+    subscription.refresh_from_db()
+    assert subscription.regularization_checkout_state == "READY"
+    assert subscription.regularization_checkout_claim is None
+    assert subscription.regularization_checkout_error == ""
+    assert AuditEvent.objects.filter(
+        barbershop=subscription.barbershop,
+        action="BILLING_REGULARIZATION_CLAIM_RESET",
+        target_id=str(subscription.id),
+    ).exists()
 
 
 @pytest.mark.django_db

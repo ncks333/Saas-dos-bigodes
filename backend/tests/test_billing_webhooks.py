@@ -218,6 +218,146 @@ def test_regularization_checkout_paid_reactivates_blocked_subscription_once(
     ).count() == 1
 
 
+@pytest.mark.django_db(transaction=True)
+def test_checkout_paid_recovers_matching_uncertain_regularization_checkout(
+    client, subscription, user
+):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.regularization_checkout_state = "RECONCILIATION_REQUIRED"
+    subscription.regularization_checkout_claim = uuid.uuid4()
+    subscription.save(
+        update_fields=[
+            "status",
+            "regularization_checkout_state",
+            "regularization_checkout_claim",
+            "updated_at",
+        ]
+    )
+    user.is_active = False
+    user.save(update_fields=["is_active"])
+
+    response = post_webhook(
+        client,
+        {
+            "id": "evt_recover_uncertain_regularization",
+            "event": "CHECKOUT_PAID",
+            "checkout": {
+                "id": "chk_recovered",
+                "externalReference": str(subscription.external_reference),
+            },
+            "subscription": {"id": "sub_recovered"},
+        },
+    )
+
+    subscription.refresh_from_db()
+    user.refresh_from_db()
+    assert response.status_code == 202
+    assert subscription.status == Subscription.Status.ACTIVE
+    assert subscription.regularization_checkout_state == "PAID"
+    assert subscription.regularization_checkout_id == "chk_recovered"
+    assert subscription.provider_subscription_id == "sub_recovered"
+    assert user.is_active is True
+
+
+@pytest.mark.django_db(transaction=True)
+def test_unrelated_checkout_cannot_reactivate_persisted_regularization_checkout(
+    client, subscription, user
+):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.regularization_checkout_state = "CREATED"
+    subscription.regularization_checkout_id = "chk_expected"
+    subscription.regularization_checkout_url = "https://asaas.test/expected"
+    subscription.save(
+        update_fields=[
+            "status",
+            "regularization_checkout_state",
+            "regularization_checkout_id",
+            "regularization_checkout_url",
+            "updated_at",
+        ]
+    )
+    user.is_active = False
+    user.save(update_fields=["is_active"])
+
+    response = post_webhook(
+        client,
+        {
+            "id": "evt_unrelated_regularization_checkout",
+            "event": "CHECKOUT_PAID",
+            "checkout": {
+                "id": "chk_unrelated",
+                "externalReference": str(subscription.external_reference),
+            },
+            "subscription": {"id": "sub_unrelated"},
+        },
+    )
+
+    subscription.refresh_from_db()
+    user.refresh_from_db()
+    assert response.status_code == 202
+    assert subscription.status == Subscription.Status.SUSPENDED
+    assert subscription.provider_subscription_id == ""
+    assert user.is_active is False
+
+
+@pytest.mark.django_db(transaction=True)
+def test_distinct_regularization_reactivations_send_one_email_per_provider_event(
+    client, subscription, user
+):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.regularization_checkout_state = "CREATED"
+    subscription.regularization_checkout_id = "chk_reactivate_one"
+    subscription.regularization_checkout_url = "https://asaas.test/one"
+    subscription.save(
+        update_fields=[
+            "status",
+            "regularization_checkout_state",
+            "regularization_checkout_id",
+            "regularization_checkout_url",
+            "updated_at",
+        ]
+    )
+    for event_id, checkout_id, provider_subscription_id in (
+        ("evt_reactivate_one", "chk_reactivate_one", "sub_reactivate_one"),
+        ("evt_reactivate_two", "chk_reactivate_two", "sub_reactivate_two"),
+    ):
+        response = post_webhook(
+            client,
+            {
+                "id": event_id,
+                "event": "CHECKOUT_PAID",
+                "checkout": {
+                    "id": checkout_id,
+                    "externalReference": str(subscription.external_reference),
+                },
+                "subscription": {"id": provider_subscription_id},
+            },
+        )
+        assert response.status_code == 202
+        if event_id == "evt_reactivate_one":
+            subscription.refresh_from_db()
+            subscription.status = Subscription.Status.SUSPENDED
+            subscription.regularization_checkout_state = "CREATED"
+            subscription.regularization_checkout_id = "chk_reactivate_two"
+            subscription.regularization_checkout_url = "https://asaas.test/two"
+            subscription.save(
+                update_fields=[
+                    "status",
+                    "regularization_checkout_state",
+                    "regularization_checkout_id",
+                    "regularization_checkout_url",
+                    "updated_at",
+                ]
+            )
+
+    assert BillingNotificationLog.objects.filter(
+        subscription=subscription,
+        kind="REACTIVATED",
+        status="SENT",
+    ).count() == 2
+    assert len(mail.outbox) == 2
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     ("event_type", "payment_status"),

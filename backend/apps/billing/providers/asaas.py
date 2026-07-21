@@ -9,6 +9,14 @@ class AsaasCheckoutError(RuntimeError):
     pass
 
 
+class AsaasCheckoutNotCreatedError(AsaasCheckoutError):
+    """Asaas rejected request before a checkout could be created."""
+
+
+class AsaasCheckoutOutcomeUnknownError(AsaasCheckoutError):
+    """Asaas may have created checkout, but caller cannot verify outcome."""
+
+
 @dataclass(frozen=True)
 class CheckoutResult:
     id: str
@@ -56,21 +64,40 @@ def _create_checkout(subscription, user, next_due_date) -> CheckoutResult:
             timeout=10,
         )
         response.raise_for_status()
+    except requests.HTTPError as exc:
+        status_code = getattr(exc.response, "status_code", None)
+        if isinstance(status_code, int) and 400 <= status_code < 500:
+            raise AsaasCheckoutNotCreatedError(
+                "Checkout Asaas recusado antes da criação"
+            ) from None
+        raise AsaasCheckoutOutcomeUnknownError(
+            "Resultado da criação de checkout Asaas é desconhecido"
+        ) from None
     except requests.RequestException:
-        raise AsaasCheckoutError("Falha ao criar checkout Asaas") from None
+        raise AsaasCheckoutOutcomeUnknownError(
+            "Resultado da criação de checkout Asaas é desconhecido"
+        ) from None
 
     try:
         data = response.json()
     except (TypeError, ValueError):
-        raise AsaasCheckoutError("Resposta inválida ao criar checkout Asaas") from None
+        raise AsaasCheckoutOutcomeUnknownError(
+            "Resultado da criação de checkout Asaas é desconhecido"
+        ) from None
     if not isinstance(data, dict):
-        raise AsaasCheckoutError("Resposta inválida ao criar checkout Asaas")
+        raise AsaasCheckoutOutcomeUnknownError(
+            "Resultado da criação de checkout Asaas é desconhecido"
+        )
     checkout_id = data.get("id")
     if not isinstance(checkout_id, str) or not checkout_id.strip():
-        raise AsaasCheckoutError("Resposta inválida ao criar checkout Asaas")
+        raise AsaasCheckoutOutcomeUnknownError(
+            "Resultado da criação de checkout Asaas é desconhecido"
+        )
     link = data.get("link")
     if link is not None and not isinstance(link, str):
-        raise AsaasCheckoutError("Resposta inválida ao criar checkout Asaas")
+        raise AsaasCheckoutOutcomeUnknownError(
+            "Resultado da criação de checkout Asaas é desconhecido"
+        )
     url = link or f"{settings.ASAAS_CHECKOUT_BASE_URL}?id={checkout_id}"
     return CheckoutResult(id=checkout_id, url=url)
 
