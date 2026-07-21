@@ -44,6 +44,7 @@ h1, h2, h3, p { margin-top: 0; }
 .back-link, .forgot-link { color: var(--gold-2); font-size: 12px; }
 .back-link { display: inline-block; margin-bottom: 22px; }
 .forgot-link { justify-self: end; margin-top: -8px; }
+.regularization-link { color: #f5c557; font-size: 13px; font-weight: 800; text-align: center; }
 .company-credit { margin: 26px 0 0; color: #74756e !important; font-size: 11px !important; letter-spacing: .04em; }
 .company-credit strong { color: var(--gold); font-weight: 700; }
 .login-credit, .public-credit { text-align: center; }
