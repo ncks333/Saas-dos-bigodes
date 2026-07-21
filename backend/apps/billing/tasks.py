@@ -1,11 +1,17 @@
 from datetime import timedelta
+from decimal import Decimal
+from urllib.parse import urlsplit, urlunsplit
 
 from celery import shared_task
-from django.db import transaction
+from django.conf import settings
+from django.core.mail import send_mail
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from .models import BillingWebhookEvent
+from apps.accounts.models import User
+
+from .models import BillingNotificationLog, BillingWebhookEvent, Subscription
 from .services import (
     activate_checkout_from_webhook,
     activate_payment_from_webhook,
@@ -29,19 +35,255 @@ WEBHOOK_RECOVERY_BATCH_SIZE = 100
 WEBHOOK_DISPATCH_LEASE = timedelta(minutes=5)
 WEBHOOK_RETRY_BASE_SECONDS = 60
 WEBHOOK_MAX_PROCESSING_ATTEMPTS = 5
+LIFECYCLE_SWEEP_WINDOW = timedelta(hours=1)
+
+BILLING_EMAIL_TEMPLATES = {
+    "TRIAL_ACTIVATED": (
+        "Seu período de teste foi ativado",
+        "Seu período de teste está ativo.",
+        False,
+    ),
+    "TRIAL_ENDS_7D": (
+        "Seu período de teste termina em 7 dias",
+        "Faltam 7 dias para o fim do período de teste.",
+        True,
+    ),
+    "TRIAL_ENDS_3D": (
+        "Seu período de teste termina em 3 dias",
+        "Faltam 3 dias para o fim do período de teste.",
+        True,
+    ),
+    "TRIAL_ENDS_1D": (
+        "Seu período de teste termina amanhã",
+        "Seu período de teste termina em 1 dia.",
+        True,
+    ),
+    "PAYMENT_RECEIVED": (
+        "Pagamento recebido",
+        "Recebemos seu pagamento e sua assinatura segue ativa.",
+        False,
+    ),
+    "PAYMENT_FAILED": (
+        "Pagamento não confirmado",
+        "Não confirmamos seu pagamento. Regularize para evitar suspensão.",
+        True,
+    ),
+    "SUSPENDED": (
+        "Assinatura suspensa",
+        "Sua assinatura está suspensa. Regularize para recuperar acesso.",
+        True,
+    ),
+    "REACTIVATED": (
+        "Assinatura reativada",
+        "Pagamento confirmado. Sua assinatura foi reativada.",
+        False,
+    ),
+    "CANCELED": ("Assinatura cancelada", "Sua assinatura foi cancelada.", True),
+}
+
+
+def _event_subscription(event):
+    if event.event_type == "CHECKOUT_PAID":
+        external_reference = event.payload.get("checkout", {}).get("externalReference")
+        if not external_reference:
+            return None
+        return Subscription.objects.filter(
+            external_reference=external_reference,
+            provider=Subscription.Provider.ASAAS,
+        ).first()
+    if (
+        event.event_type
+        in PAYMENT_SUCCESS_EVENTS | PAYMENT_FAILURE_EVENTS | IMMEDIATE_SUSPENSION_EVENTS
+    ):
+        provider_subscription_id = event.payload.get("payment", {}).get("subscription")
+    elif event.event_type in CANCEL_EVENTS:
+        provider_subscription_id = event.payload.get("subscription", {}).get("id")
+    else:
+        return None
+    if not provider_subscription_id:
+        return None
+    return Subscription.objects.filter(
+        provider=Subscription.Provider.ASAAS,
+        provider_subscription_id=provider_subscription_id,
+    ).first()
 
 
 def _apply_transition(event):
+    subscription = _event_subscription(event)
+    prior_status = subscription.status if subscription is not None else None
     if event.event_type == "CHECKOUT_PAID":
         activate_checkout_from_webhook(event)
+        if subscription is not None:
+            subscription.refresh_from_db()
+            if (
+                prior_status == Subscription.Status.PENDING_CHECKOUT
+                and subscription.status == Subscription.Status.TRIAL
+            ):
+                return "TRIAL_ACTIVATED"
     elif event.event_type in PAYMENT_SUCCESS_EVENTS:
         activate_payment_from_webhook(event)
+        if subscription is not None:
+            payment_id = event.payload.get("payment", {}).get("id")
+            subscription.refresh_from_db()
+            if (
+                subscription.status == Subscription.Status.ACTIVE
+                and subscription.last_payment_id == payment_id
+            ):
+                if prior_status in {
+                    Subscription.Status.GRACE,
+                    Subscription.Status.SUSPENDED,
+                }:
+                    return "REACTIVATED"
+                return "PAYMENT_RECEIVED"
     elif event.event_type in PAYMENT_FAILURE_EVENTS:
         start_payment_grace_from_webhook(event)
+        if subscription is not None:
+            payment_id = event.payload.get("payment", {}).get("id")
+            subscription.refresh_from_db()
+            if (
+                prior_status != Subscription.Status.GRACE
+                and subscription.status == Subscription.Status.GRACE
+                and subscription.grace_payment_id == payment_id
+            ):
+                return "PAYMENT_FAILED"
     elif event.event_type in IMMEDIATE_SUSPENSION_EVENTS:
         suspend_chargeback_from_webhook(event)
+        if subscription is not None:
+            subscription.refresh_from_db()
+            if (
+                prior_status != Subscription.Status.SUSPENDED
+                and subscription.status == Subscription.Status.SUSPENDED
+                and subscription.suspension_reason == "CHARGEBACK"
+            ):
+                return "SUSPENDED"
     elif event.event_type in CANCEL_EVENTS:
         cancel_subscription_from_webhook(event)
+        if subscription is not None:
+            subscription.refresh_from_db()
+            if (
+                prior_status != Subscription.Status.CANCELED
+                and subscription.status == Subscription.Status.CANCELED
+            ):
+                return "CANCELED"
+    return None
+
+
+def _regularization_url():
+    frontend_url = urlsplit(settings.FRONTEND_URL)
+    return urlunsplit(
+        (
+            "https",
+            frontend_url.netloc,
+            f"{frontend_url.path.rstrip('/')}/regularizar",
+            "",
+            "",
+        )
+    )
+
+
+def _billing_email_content(subscription, kind):
+    subject, message, includes_regularization_url = BILLING_EMAIL_TEMPLATES[kind]
+    due_at = (
+        subscription.trial_ends_at
+        or subscription.grace_ends_at
+        or subscription.next_billing_at
+        or subscription.current_period_ends_at
+    )
+    due_date = (
+        timezone.localtime(due_at).strftime("%d/%m/%Y %H:%M")
+        if due_at
+        else "Não informada"
+    )
+    amount = Decimal(subscription.plan.amount).quantize(Decimal("0.01"))
+    lines = [
+        message,
+        "",
+        f"Barbearia: {subscription.barbershop.name}",
+        f"Plano: {subscription.plan.name}",
+        f"Valor: R$ {amount:.2f}".replace(".", ","),
+        f"Status: {subscription.get_status_display()}",
+        f"Vencimento: {due_date}",
+    ]
+    if includes_regularization_url:
+        lines.extend(["", f"Regularize em: {_regularization_url()}"])
+    return subject, "\n".join(lines)
+
+
+def _notification_log(subscription_id, kind):
+    notification = BillingNotificationLog.objects.filter(
+        subscription_id=subscription_id,
+        kind=kind,
+    ).first()
+    if notification is not None:
+        return notification
+    try:
+        with transaction.atomic():
+            return BillingNotificationLog.objects.create(
+                subscription_id=subscription_id,
+                kind=kind,
+            )
+    except IntegrityError:
+        return BillingNotificationLog.objects.get(
+            subscription_id=subscription_id,
+            kind=kind,
+        )
+
+
+def _enqueue_billing_email_after_commit(subscription_id, kind):
+    notification = _notification_log(subscription_id, kind)
+    if notification.status == "SENT":
+        return
+    transaction.on_commit(lambda: send_billing_email.delay(subscription_id, kind))
+
+
+@shared_task
+def send_billing_email(subscription_id, kind):
+    if kind not in BILLING_EMAIL_TEMPLATES:
+        raise ValueError(f"Unknown billing email kind: {kind}")
+    notification = _notification_log(subscription_id, kind)
+    claimed = BillingNotificationLog.objects.filter(
+        pk=notification.pk,
+        status__in=("PENDING", "FAILED"),
+    ).update(status="SENDING", sent_at=None)
+    if not claimed:
+        return False
+    try:
+        subscription = Subscription.objects.select_related("barbershop", "plan").get(
+            pk=subscription_id
+        )
+        recipients = list(
+            User.objects.filter(
+                barbershop_id=subscription.barbershop_id,
+                role=User.Role.ADMIN,
+            )
+            .exclude(email="")
+            .values_list("email", flat=True)
+            .distinct()
+        )
+        if not recipients:
+            raise RuntimeError("Billing subscription has no admin email recipient")
+        subject, body = _billing_email_content(subscription, kind)
+        if (
+            send_mail(
+                subject,
+                body,
+                settings.DEFAULT_FROM_EMAIL,
+                recipients,
+                fail_silently=False,
+            )
+            != 1
+        ):
+            raise RuntimeError("Billing email backend did not confirm delivery")
+    except Exception:
+        BillingNotificationLog.objects.filter(
+            pk=notification.pk, status="SENDING"
+        ).update(status="FAILED")
+        raise
+    BillingNotificationLog.objects.filter(pk=notification.pk, status="SENDING").update(
+        status="SENT",
+        sent_at=timezone.now(),
+    )
+    return True
 
 
 def prepare_billing_webhook_dispatch(event_id, *, now=None):
@@ -118,7 +360,12 @@ def process_billing_webhook(event_id):
             processed_at = timezone.now()
             event.processing_attempts += 1
             event.last_processing_attempt_at = processed_at
-            _apply_transition(event)
+            notification_kind = _apply_transition(event)
+            if notification_kind is not None:
+                _enqueue_billing_email_after_commit(
+                    _event_subscription(event).id,
+                    notification_kind,
+                )
             event.processed_at = processed_at
             event.processing_error = ""
             event.next_dispatch_at = None
@@ -160,3 +407,47 @@ def redispatch_unprocessed_billing_webhooks():
             continue
         dispatched_count += 1
     return dispatched_count
+
+
+@shared_task
+def sweep_subscription_lifecycle():
+    now = timezone.now()
+    queued_count = 0
+    with transaction.atomic():
+        for days, kind in (
+            (7, "TRIAL_ENDS_7D"),
+            (3, "TRIAL_ENDS_3D"),
+            (1, "TRIAL_ENDS_1D"),
+        ):
+            window_start = now + timedelta(days=days)
+            window_end = window_start + LIFECYCLE_SWEEP_WINDOW
+            subscription_ids = Subscription.objects.filter(
+                status=Subscription.Status.TRIAL,
+                trial_ends_at__gte=window_start,
+                trial_ends_at__lt=window_end,
+            ).values_list("id", flat=True)
+            for subscription_id in subscription_ids:
+                _enqueue_billing_email_after_commit(subscription_id, kind)
+                queued_count += 1
+
+        expired_subscriptions = Subscription.objects.select_for_update().filter(
+            status=Subscription.Status.GRACE,
+            grace_ends_at__lte=now,
+        )
+        for subscription in expired_subscriptions:
+            subscription.status = Subscription.Status.SUSPENDED
+            subscription.grace_ends_at = None
+            subscription.suspended_at = now
+            subscription.suspension_reason = "GRACE_EXPIRED"
+            subscription.save(
+                update_fields=[
+                    "status",
+                    "grace_ends_at",
+                    "suspended_at",
+                    "suspension_reason",
+                    "updated_at",
+                ]
+            )
+            _enqueue_billing_email_after_commit(subscription.id, "SUSPENDED")
+            queued_count += 1
+    return queued_count

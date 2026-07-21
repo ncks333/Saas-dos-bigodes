@@ -130,6 +130,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.billing.tasks.redispatch_unprocessed_billing_webhooks",
         "schedule": 60.0,
     },
+    "billing-lifecycle-sweep-hourly": {
+        "task": "apps.billing.tasks.sweep_subscription_lifecycle",
+        "schedule": 3600.0,
+    },
 }
 
 def env_list(name: str, default: str = "") -> list[str]:
