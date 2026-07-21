@@ -94,7 +94,10 @@ def backfill_payment_cycles(apps, schema_editor):
                 "grace_started_at",
                 grace_started_at,
             )
-        if subscription.last_payment_id:
+        if (
+            subscription.last_payment_id
+            and subscription.last_payment_status in {"CONFIRMED", "RECEIVED"}
+        ):
             cycle, _ = cycle_model.objects.get_or_create(
                 subscription_id=subscription.id,
                 provider_payment_id=subscription.last_payment_id,

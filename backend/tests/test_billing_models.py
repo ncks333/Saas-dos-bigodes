@@ -188,6 +188,30 @@ def test_0003_migration_backfills_payment_cycle_history_and_blocks_delayed_grace
             last_payment_at=base_at + timedelta(hours=3),
             last_provider_event_at=base_at + timedelta(hours=3),
         )
+        failed_subscriptions = []
+        for suffix, payment_status in (
+            ("overdue", "OVERDUE"),
+            ("risk", "REPROVED_BY_RISK_ANALYSIS"),
+        ):
+            failed_barbershop = old_apps.get_model(
+                "barbershops", "Barbershop"
+            ).objects.create(
+                name=f"Migração falha {suffix}",
+                slug=f"migracao-falha-{suffix}",
+            )
+            failed_subscriptions.append(
+                old_apps.get_model("billing", "Subscription").objects.create(
+                    barbershop_id=failed_barbershop.id,
+                    plan_id=plan.id,
+                    status="GRACE",
+                    provider_subscription_id=f"sub_failed_{suffix}",
+                    last_payment_id=f"pay_failed_{suffix}",
+                    grace_payment_id=f"pay_failed_{suffix}",
+                    last_payment_status=payment_status,
+                    last_payment_at=base_at,
+                    grace_ends_at=base_at + timedelta(days=7),
+                )
+            )
         old_event = old_apps.get_model("billing", "BillingWebhookEvent")
         for index, (event_type, payment_id, payment_status) in enumerate(
             [
@@ -232,6 +256,13 @@ def test_0003_migration_backfills_payment_cycle_history_and_blocks_delayed_grace
         assert cycles["pay_b_migration"].succeeded_at == base_at + timedelta(
             hours=3
         )
+        for failed_subscription in failed_subscriptions:
+            failed_cycle = cycle_model.objects.get(
+                subscription_id=failed_subscription.id,
+                provider_payment_id=failed_subscription.last_payment_id,
+            )
+            assert failed_cycle.grace_started_at == base_at
+            assert failed_cycle.succeeded_at is None
 
         executor = MigrationExecutor(connection)
         executor.migrate(original_targets)

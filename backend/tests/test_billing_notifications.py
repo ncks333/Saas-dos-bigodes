@@ -1,5 +1,6 @@
 from datetime import timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -222,6 +223,41 @@ def test_expired_grace_suspends_without_deleting_data_or_disabling_barbershop(
 
 
 @pytest.mark.django_db(transaction=True)
+def test_grace_suspension_email_is_deduped_per_payment_cycle(subscription, user):
+    for payment_id in ("pay_grace_cycle_one", "pay_grace_cycle_two"):
+        subscription.status = Subscription.Status.GRACE
+        subscription.grace_payment_id = payment_id
+        subscription.grace_ends_at = timezone.now() - timedelta(minutes=1)
+        subscription.suspended_at = None
+        subscription.suspension_reason = ""
+        subscription.save(
+            update_fields=[
+                "status",
+                "grace_payment_id",
+                "grace_ends_at",
+                "suspended_at",
+                "suspension_reason",
+                "updated_at",
+            ]
+        )
+
+        sweep_subscription_lifecycle()
+        subscription.refresh_from_db()
+        assert subscription.status == Subscription.Status.SUSPENDED
+
+    notifications = BillingNotificationLog.objects.filter(
+        subscription=subscription,
+        kind="SUSPENDED",
+        status="SENT",
+    ).order_by("id")
+    assert list(notifications.values_list("dedupe_key", flat=True)) == [
+        "grace:pay_grace_cycle_one",
+        "grace:pay_grace_cycle_two",
+    ]
+    assert len(mail.outbox) == 2
+
+
+@pytest.mark.django_db(transaction=True)
 def test_webhook_email_enqueues_only_after_successful_transaction(
     pending_subscription, monkeypatch
 ):
@@ -233,11 +269,20 @@ def test_webhook_email_enqueues_only_after_successful_transaction(
             "checkout": {
                 "id": pending_subscription.provider_checkout_id,
                 "externalReference": str(pending_subscription.external_reference),
+                "status": "PAID",
             },
             "subscription": {"id": "sub_notification_checkout"},
         },
     )
     queued = []
+    monkeypatch.setattr(
+        "apps.billing.services.reconcile_paid_checkout",
+        lambda checkout_id, external_reference: SimpleNamespace(
+            checkout_id=checkout_id,
+            external_reference=external_reference,
+            provider_subscription_id="sub_notification_checkout",
+        ),
+    )
     monkeypatch.setattr(
         "apps.billing.tasks.send_billing_email.delay",
         lambda *args: queued.append(args),

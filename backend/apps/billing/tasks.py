@@ -580,6 +580,11 @@ def sweep_subscription_lifecycle():
             grace_ends_at__lte=now,
         )
         for subscription in expired_subscriptions:
+            grace_cycle_key = (
+                f"grace:{subscription.grace_payment_id}"
+                if subscription.grace_payment_id
+                else f"grace-deadline:{subscription.grace_ends_at.isoformat()}"
+            )
             subscription.status = Subscription.Status.SUSPENDED
             subscription.grace_ends_at = None
             subscription.suspended_at = now
@@ -593,6 +598,10 @@ def sweep_subscription_lifecycle():
                     "updated_at",
                 ]
             )
-            _enqueue_billing_email_after_commit(subscription.id, "SUSPENDED")
+            _enqueue_billing_email_after_commit(
+                subscription.id,
+                "SUSPENDED",
+                grace_cycle_key,
+            )
             queued_count += 1
     return queued_count
