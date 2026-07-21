@@ -1,7 +1,24 @@
+import re
+
 import requests
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.core.mail.backends.base import BaseEmailBackend
+
+
+BILLING_IDEMPOTENCY_KEY_PATTERN = re.compile(r"billing-notification-[1-9][0-9]*\Z")
+MAX_IDEMPOTENCY_KEY_LENGTH = 256
+
+
+def _resend_idempotency_header(message):
+    value = getattr(message, "extra_headers", {}).get("Idempotency-Key")
+    if (
+        not isinstance(value, str)
+        or len(value) > MAX_IDEMPOTENCY_KEY_LENGTH
+        or not BILLING_IDEMPOTENCY_KEY_PATTERN.fullmatch(value)
+    ):
+        return {}
+    return {"Idempotency-Key": value}
 
 
 class ResendEmailBackend(BaseEmailBackend):
@@ -33,10 +50,12 @@ class ResendEmailBackend(BaseEmailBackend):
                     payload["html"] = content
                     break
             try:
+                headers = {"Authorization": f"Bearer {api_key}"}
+                headers.update(_resend_idempotency_header(message))
                 response = requests.post(
                     self.endpoint,
                     json=payload,
-                    headers={"Authorization": f"Bearer {api_key}"},
+                    headers=headers,
                     timeout=10,
                 )
                 response.raise_for_status()

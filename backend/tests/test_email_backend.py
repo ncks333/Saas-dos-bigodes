@@ -49,6 +49,59 @@ def test_resend_backend_sends_django_email(monkeypatch):
     )
 
 
+@override_settings(RESEND_API_KEY="resend-secret")
+def test_resend_backend_propagates_valid_billing_idempotency_key(monkeypatch):
+    response = Mock()
+    monkeypatch.setattr("core.email_backends.requests.post", Mock(return_value=response))
+    message = EmailMultiAlternatives(
+        "Cobrança",
+        "Pagamento pendente.",
+        None,
+        ["admin@example.com"],
+        headers={"Idempotency-Key": "billing-notification-123"},
+    )
+
+    assert ResendEmailBackend().send_messages([message]) == 1
+    __import__("core.email_backends", fromlist=["requests"]).requests.post.assert_called_once_with(
+        "https://api.resend.com/emails",
+        json={
+            "from": "nao-responda@bigodes.local",
+            "to": ["admin@example.com"],
+            "subject": "Cobrança",
+            "text": "Pagamento pendente.",
+        },
+        headers={
+            "Authorization": "Bearer resend-secret",
+            "Idempotency-Key": "billing-notification-123",
+        },
+        timeout=10,
+    )
+
+
+@override_settings(RESEND_API_KEY="resend-secret")
+def test_resend_backend_ignores_invalid_or_non_billing_idempotency_key(monkeypatch):
+    response = Mock()
+    monkeypatch.setattr("core.email_backends.requests.post", Mock(return_value=response))
+    message = EmailMultiAlternatives(
+        "Assunto",
+        "Texto",
+        None,
+        ["cliente@example.com"],
+        headers={"Idempotency-Key": "billing-notification-1\r\nX-Injected: true"},
+    )
+
+    assert ResendEmailBackend().send_messages([message]) == 1
+    __import__("core.email_backends", fromlist=["requests"]).requests.post.assert_called_once_with(
+        "https://api.resend.com/emails",
+        json={
+            "from": "nao-responda@bigodes.local",
+            "to": ["cliente@example.com"],
+            "subject": "Assunto",
+            "text": "Texto",
+        },
+        headers={"Authorization": "Bearer resend-secret"},
+        timeout=10,
+    )
 @override_settings(RESEND_API_KEY="")
 def test_resend_backend_requires_api_key():
     message = EmailMultiAlternatives("Assunto", "Texto", None, ["cliente@example.com"])

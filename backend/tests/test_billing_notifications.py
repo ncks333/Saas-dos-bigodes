@@ -50,7 +50,7 @@ def test_failed_billing_email_can_retry_without_marking_first_attempt_sent(
     def fail_once(*_args, **_kwargs):
         raise RuntimeError("Resend unavailable")
 
-    monkeypatch.setattr("apps.billing.tasks.send_mail", fail_once)
+    monkeypatch.setattr("apps.billing.tasks.EmailMultiAlternatives.send", fail_once)
     with pytest.raises(RuntimeError, match="Resend unavailable"):
         send_billing_email(subscription.id, "PAYMENT_FAILED")
 
@@ -69,6 +69,36 @@ def test_failed_billing_email_can_retry_without_marking_first_attempt_sent(
     assert "https://localhost:5173/regularizar" in mail.outbox[0].body
     assert notification.status == "SENT"
     assert notification.sent_at is not None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_billing_retry_reuses_stable_resend_idempotency_key(
+    subscription, user, monkeypatch
+):
+    keys = []
+
+    def fail_then_send(message, **_kwargs):
+        keys.append(message.extra_headers["Idempotency-Key"])
+        if len(keys) == 1:
+            raise RuntimeError("Resend unavailable")
+        return 1
+
+    monkeypatch.setattr(
+        "apps.billing.tasks.EmailMultiAlternatives.send",
+        fail_then_send,
+    )
+    with pytest.raises(RuntimeError, match="Resend unavailable"):
+        send_billing_email(subscription.id, "PAYMENT_FAILED")
+
+    notification = BillingNotificationLog.objects.get(
+        subscription=subscription,
+        kind="PAYMENT_FAILED",
+    )
+    assert recover_billing_notification_emails.run() == 1
+    assert keys == [
+        f"billing-notification-{notification.id}",
+        f"billing-notification-{notification.id}",
+    ]
 
 
 @pytest.mark.django_db(transaction=True)

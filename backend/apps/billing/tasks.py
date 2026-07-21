@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from celery import shared_task
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import EmailMultiAlternatives
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -39,6 +39,8 @@ WEBHOOK_MAX_PROCESSING_ATTEMPTS = 5
 LIFECYCLE_SWEEP_WINDOW = timedelta(hours=1)
 NOTIFICATION_RECOVERY_BATCH_SIZE = 100
 NOTIFICATION_SENDING_LEASE = timedelta(minutes=5)
+BILLING_IDEMPOTENCY_KEY_PREFIX = "billing-notification-"
+MAX_RESEND_IDEMPOTENCY_KEY_LENGTH = 256
 
 BILLING_EMAIL_TEMPLATES = {
     "TRIAL_ACTIVATED": (
@@ -212,6 +214,13 @@ def _billing_email_content(subscription, kind):
     return subject, "\n".join(lines)
 
 
+def _billing_idempotency_key(notification_id):
+    key = f"{BILLING_IDEMPOTENCY_KEY_PREFIX}{notification_id}"
+    if len(key) > MAX_RESEND_IDEMPOTENCY_KEY_LENGTH:
+        raise ValueError("Billing idempotency key exceeds Resend limit")
+    return key
+
+
 def _notification_log(subscription_id, kind):
     notification = BillingNotificationLog.objects.filter(
         subscription_id=subscription_id,
@@ -272,16 +281,14 @@ def send_billing_email(subscription_id, kind):
         if not recipients:
             raise RuntimeError("Billing subscription has no admin email recipient")
         subject, body = _billing_email_content(subscription, kind)
-        if (
-            send_mail(
-                subject,
-                body,
-                settings.DEFAULT_FROM_EMAIL,
-                recipients,
-                fail_silently=False,
-            )
-            != 1
-        ):
+        message = EmailMultiAlternatives(
+            subject,
+            body,
+            settings.DEFAULT_FROM_EMAIL,
+            recipients,
+            headers={"Idempotency-Key": _billing_idempotency_key(notification.pk)},
+        )
+        if message.send(fail_silently=False) != 1:
             raise RuntimeError("Billing email backend did not confirm delivery")
     except Exception:
         BillingNotificationLog.objects.filter(
