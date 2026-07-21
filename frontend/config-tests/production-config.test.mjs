@@ -31,6 +31,10 @@ const backendProductionEnv = readFileSync(
   new URL("backend/.env.production.example", repositoryRoot),
   "utf8",
 );
+const frontendProductionEnv = readFileSync(
+  new URL("frontend/.env.production.example", repositoryRoot),
+  "utf8",
+);
 const productionEnvValidator = readFileSync(
   new URL("scripts/validate-production-env.mjs", root),
   "utf8",
@@ -200,12 +204,22 @@ test("backend production example declares only placeholder billing and Resend se
     "ASAAS_API_KEY=cole-o-token-da-api-asaas",
     "ASAAS_WEBHOOK_TOKEN=gere-um-token-webhook-forte-e-independente",
     "ASAAS_CHECKOUT_EXPIRES_MINUTES=60",
+    "ASAAS_CHECKOUT_ALLOWED_ORIGINS=https://asaas.com,https://www.asaas.com",
+    "ASAAS_PROVIDER_TIMEZONE=America/Sao_Paulo",
+    "BILLING_PUBLIC_PLAN_CODE=barberhub",
     "FRONTEND_URL=https://app.seudominio.com",
     "EMAIL_BACKEND=core.email_backends.ResendEmailBackend",
     "RESEND_API_KEY=cole-a-chave-restrita-de-envio-do-resend",
   ]) {
     assert.match(backendProductionEnv, new RegExp(`^${entry}$`, "m"));
   }
+});
+
+test("frontend production example declares the exact public checkout origins", () => {
+  assert.match(
+    frontendProductionEnv,
+    /^VITE_ASAAS_CHECKOUT_ORIGINS=https:\/\/asaas\.com,https:\/\/www\.asaas\.com$/m,
+  );
 });
 
 test("subscription deployment docs match supported Asaas lifecycle", () => {
@@ -222,6 +236,8 @@ test("subscription deployment docs match supported Asaas lifecycle", () => {
   }
   for (const eventName of [
     "CHECKOUT_PAID",
+    "CHECKOUT_CANCELED",
+    "CHECKOUT_EXPIRED",
     "PAYMENT_CONFIRMED",
     "PAYMENT_RECEIVED",
     "PAYMENT_OVERDUE",
@@ -245,11 +261,11 @@ test("subscription deployment docs match supported Asaas lifecycle", () => {
   assert.match(deployGuide, /não.*relê.*plan\.trial_days/i);
   assert.match(deployGuide, /nextDueDate.*Asaas.*criação do checkout/i);
   assert.match(deployGuide, /alterar.*subscription.*após signup.*proibido.*insuficiente/i);
-  assert.match(deployGuide, /SubscriptionPlan\.trial_days=60.*ANTES.*signup\/provision_signup/i);
+  assert.match(deployGuide, /BILLING_PUBLIC_PLAN_CODE.*plano público.*ativo/i);
+  assert.match(deployGuide, /navegador.*não.*seleciona.*plano/i);
+  assert.match(deployGuide, /oferta.*piloto.*servidor.*60 dias.*antes.*provision/i);
   assert.match(deployGuide, /snapshot local.*nextDueDate.*60/i);
-  assert.match(deployGuide, /restaure.*30.*após.*checkout/i);
-  assert.match(deployGuide, /antes.*signup público concorrente/i);
-  assert.match(deployGuide, /plano\/oferta piloto.*servidor.*antes.*provisioning/i);
+  assert.doesNotMatch(deployGuide, /restaure.*plano público.*30/i);
   assert.match(deployGuide, /checkout.*30.*não edite.*banco.*cancele.*reemita/i);
   assert.doesNotMatch(deployGuide, /subscription\.trial_days=60.*subscription\.trial_ends_at/i);
   assert.doesNotMatch(deployGuide, /processamento é idempotente para eventos e e-mails/i);
@@ -257,11 +273,24 @@ test("subscription deployment docs match supported Asaas lifecycle", () => {
   assert.match(securityGuide, /dados de cartão.*payload.*provedor/i);
   assert.match(securityGuide, /e-mails de ciclo.*idempotentes por evento/i);
   assert.match(securityGuide, /e-mail de regularização.*token assinado.*uma hora/i);
-  assert.match(securityGuide, /requisições públicas repetidas.*podem.*enfileirar e-mails repetidos/i);
+  assert.match(securityGuide, /pedido.*regularização.*persistido.*broker/i);
+  assert.match(securityGuide, /e-mail desconhecido.*não.*persistido/i);
+  assert.match(securityGuide, /24 horas/i);
   assert.match(securityGuide, /não enumera contas/i);
-  assert.match(readme, /SubscriptionPlan\.trial_days=60.*antes.*signup\/provision_signup/i);
+  assert.match(readme, /oferta.*piloto.*servidor.*60 dias/i);
   assert.match(readme, /checkout.*30.*não edite.*banco.*cancele.*reemita/i);
   assert.match(billingRunbook, /nunca execute novo checkout/i);
+});
+
+test("billing operations docs describe durable fail-closed provider handling", () => {
+  assert.match(deployGuide, /evento.*persistido.*200.*broker/i);
+  assert.match(deployGuide, /checkout.*ID persistido.*consulta.*Asaas/i);
+  assert.match(deployGuide, /dateCreated.*ASAAS_PROVIDER_TIMEZONE/i);
+  assert.match(deployGuide, /CHECKOUT_CANCELED.*CHECKOUT_EXPIRED.*checkout atual/is);
+  assert.match(deployGuide, /suspensão.*pagamento.*ciclo/i);
+  assert.match(securityGuide, /HTTPS.*origens.*exatas.*Asaas/i);
+  assert.match(securityGuide, /token.*URL.*antes.*PostHog/i);
+  assert.match(securityGuide, /login bloqueado.*JWT.*last_login/i);
 });
 
 test("README names Resend HTTPS API instead of SMTP for transactional email", () => {
