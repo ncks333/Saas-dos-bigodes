@@ -310,6 +310,104 @@ def test_unrelated_checkout_cannot_reactivate_persisted_regularization_checkout(
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    ("checkout_id", "expected_status"),
+    [
+        ("chk_legacy", Subscription.Status.ACTIVE),
+        ("chk_wrong", Subscription.Status.SUSPENDED),
+    ],
+)
+def test_legacy_created_checkout_requires_its_static_reference_and_exact_id(
+    client, subscription, user, checkout_id, expected_status
+):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.regularization_checkout_state = "CREATED"
+    subscription.regularization_checkout_id = "chk_legacy"
+    subscription.regularization_checkout_url = "https://asaas.test/legacy"
+    subscription.regularization_checkout_reference = subscription.external_reference
+    subscription.save(
+        update_fields=[
+            "status",
+            "regularization_checkout_state",
+            "regularization_checkout_id",
+            "regularization_checkout_url",
+            "regularization_checkout_reference",
+            "updated_at",
+        ]
+    )
+    user.is_active = False
+    user.save(update_fields=["is_active"])
+
+    response = post_webhook(
+        client,
+        {
+            "id": f"evt_legacy_{checkout_id}",
+            "event": "CHECKOUT_PAID",
+            "checkout": {
+                "id": checkout_id,
+                "externalReference": str(subscription.external_reference),
+            },
+            "subscription": {"id": "sub_legacy"},
+        },
+    )
+
+    subscription.refresh_from_db()
+    user.refresh_from_db()
+    assert response.status_code == 202
+    assert subscription.status == expected_status
+    assert user.is_active is (expected_status == Subscription.Status.ACTIVE)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_legacy_attach_with_attempt_reference_allows_exact_webhook_recovery(
+    client, subscription, user
+):
+    from django.core.management import call_command
+
+    attempt_reference = uuid.uuid4()
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.regularization_checkout_state = "RECONCILIATION_REQUIRED"
+    subscription.regularization_checkout_reference = None
+    subscription.save(
+        update_fields=[
+            "status",
+            "regularization_checkout_state",
+            "regularization_checkout_reference",
+            "updated_at",
+        ]
+    )
+    user.is_active = False
+    user.save(update_fields=["is_active"])
+    call_command(
+        "reconcile_regularization_checkout",
+        subscription_id=subscription.id,
+        verified_checkout_id="chk_legacy_attached",
+        verified_checkout_url="https://asaas.test/legacy-attached",
+        attempt_reference=str(attempt_reference),
+    )
+
+    response = post_webhook(
+        client,
+        {
+            "id": "evt_legacy_attached",
+            "event": "CHECKOUT_PAID",
+            "checkout": {
+                "id": "chk_legacy_attached",
+                "externalReference": str(attempt_reference),
+            },
+            "subscription": {"id": "sub_legacy_attached"},
+        },
+    )
+
+    subscription.refresh_from_db()
+    user.refresh_from_db()
+    assert response.status_code == 202
+    assert subscription.status == Subscription.Status.ACTIVE
+    assert subscription.regularization_checkout_state == "PAID"
+    assert user.is_active is True
+
+
+@pytest.mark.django_db(transaction=True)
 def test_old_attempt_checkout_cannot_reactivate_new_uncertain_attempt(
     client, subscription, user
 ):

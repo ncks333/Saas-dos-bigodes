@@ -96,6 +96,69 @@ def test_initial_migration_backfills_existing_barbershops():
 
 
 @pytest.mark.django_db(transaction=True)
+def test_0008_backfills_only_known_legacy_regularization_checkouts():
+    executor = MigrationExecutor(connection)
+    original_targets = executor.loader.graph.leaf_nodes()
+    migration_from = ("billing", "0007_regularization_reconciliation_and_notification_dedupe")
+    migration_to = ("billing", "0008_regularization_attempt_reference_and_claim_started")
+    try:
+        executor.migrate([migration_from])
+        old_apps = executor.loader.project_state([migration_from]).apps
+        barbershop_model = old_apps.get_model("barbershops", "Barbershop")
+        plan_model = old_apps.get_model("billing", "SubscriptionPlan")
+        subscription_model = old_apps.get_model("billing", "Subscription")
+        plan = plan_model.objects.create(
+            code="legacy-regularization",
+            name="Legacy regularization",
+            amount=Decimal("79.90"),
+        )
+
+        def create_subscription(slug, state, checkout_id="", checkout_url=""):
+            barbershop = barbershop_model.objects.create(name=slug, slug=slug)
+            return subscription_model.objects.create(
+                barbershop_id=barbershop.id,
+                plan_id=plan.id,
+                status="SUSPENDED",
+                regularization_checkout_state=state,
+                regularization_checkout_id=checkout_id,
+                regularization_checkout_url=checkout_url,
+            )
+
+        created = create_subscription(
+            "legacy-created",
+            "CREATED",
+            "chk_legacy",
+            "https://asaas.test/chk_legacy",
+        )
+        creating = create_subscription("legacy-creating", "CREATING")
+        reconciliation = create_subscription(
+            "legacy-reconciliation", "RECONCILIATION_REQUIRED"
+        )
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([migration_to])
+        migrated_apps = executor.loader.project_state([migration_to]).apps
+        migrated_subscription = migrated_apps.get_model("billing", "Subscription")
+
+        assert (
+            migrated_subscription.objects.get(pk=created.id).regularization_checkout_reference
+            == created.external_reference
+        )
+        assert (
+            migrated_subscription.objects.get(pk=creating.id).regularization_checkout_reference
+            is None
+        )
+        assert (
+            migrated_subscription.objects.get(
+                pk=reconciliation.id
+            ).regularization_checkout_reference
+            is None
+        )
+    finally:
+        MigrationExecutor(connection).migrate(original_targets)
+
+
+@pytest.mark.django_db(transaction=True)
 def test_0003_migration_backfills_payment_cycle_history_and_blocks_delayed_grace():
     executor = MigrationExecutor(connection)
     original_targets = executor.loader.graph.leaf_nodes()

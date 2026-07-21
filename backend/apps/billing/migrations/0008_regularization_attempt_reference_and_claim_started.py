@@ -3,6 +3,18 @@
 from django.db import migrations, models
 
 
+def backfill_known_legacy_checkout_references(apps, schema_editor):
+    subscription_model = apps.get_model("billing", "Subscription")
+    (
+        subscription_model.objects.filter(
+            regularization_checkout_state="CREATED",
+        )
+        .exclude(regularization_checkout_id="")
+        .exclude(regularization_checkout_url="")
+        .update(regularization_checkout_reference=models.F("external_reference"))
+    )
+
+
 class Migration(migrations.Migration):
     dependencies = [
         ("billing", "0007_regularization_reconciliation_and_notification_dedupe"),
@@ -18,5 +30,9 @@ class Migration(migrations.Migration):
             model_name="subscription",
             name="regularization_checkout_reference",
             field=models.UUIDField(blank=True, editable=False, null=True, unique=True),
+        ),
+        migrations.RunPython(
+            backfill_known_legacy_checkout_references,
+            migrations.RunPython.noop,
         ),
     ]

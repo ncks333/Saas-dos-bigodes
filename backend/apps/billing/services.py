@@ -2,7 +2,7 @@ import logging
 import time as time_module
 from collections.abc import Mapping
 from datetime import UTC, time, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from django.core.signing import TimestampSigner
 from django.core.validators import URLValidator
@@ -685,6 +685,7 @@ def reconcile_regularization_checkout(
     *,
     checkout_id="",
     checkout_url="",
+    attempt_reference=None,
     reset_confirmed_no_active_checkout=False,
 ):
     attach_checkout = bool(checkout_id or checkout_url)
@@ -697,6 +698,11 @@ def reconcile_regularization_checkout(
             URLValidator()(checkout_url)
         except Exception as exc:
             raise ValueError("URL de checkout verificada é inválida.") from exc
+    if attempt_reference:
+        try:
+            attempt_reference = UUID(str(attempt_reference))
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise ValueError("Referência da tentativa verificada é inválida.") from exc
 
     with transaction.atomic():
         subscription = Subscription.objects.select_for_update().get(pk=subscription_id)
@@ -716,6 +722,17 @@ def reconcile_regularization_checkout(
         ):
             raise ValueError("Checkout em criação recente; aguarde reconciliação segura.")
         if attach_checkout:
+            if subscription.regularization_checkout_reference is None:
+                if attempt_reference is None:
+                    raise ValueError(
+                        "Checkout legado exige referência da tentativa verificada."
+                    )
+                subscription.regularization_checkout_reference = attempt_reference
+            elif (
+                attempt_reference is not None
+                and subscription.regularization_checkout_reference != attempt_reference
+            ):
+                raise ValueError("Referência da tentativa não corresponde ao checkout.")
             subscription.regularization_checkout_state = (
                 Subscription.RegularizationCheckoutState.CREATED
             )
@@ -723,7 +740,10 @@ def reconcile_regularization_checkout(
             subscription.regularization_checkout_url = checkout_url
             subscription.provider_checkout_id = checkout_id
             action = "BILLING_REGULARIZATION_CHECKOUT_ATTACHED"
-            metadata = {"checkout_id": checkout_id}
+            metadata = {
+                "checkout_id": checkout_id,
+                "attempt_reference": str(subscription.regularization_checkout_reference),
+            }
         else:
             subscription.regularization_checkout_state = (
                 Subscription.RegularizationCheckoutState.READY

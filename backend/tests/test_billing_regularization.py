@@ -416,9 +416,11 @@ def test_compensation_failure_requires_reconciliation_and_no_retry(
 
 @pytest.mark.django_db
 def test_reconciliation_command_attaches_verified_checkout(subscription):
+    attempt_reference = uuid4()
     subscription.status = Subscription.Status.SUSPENDED
     subscription.regularization_checkout_state = "CREATING"
     subscription.regularization_checkout_claim = uuid4()
+    subscription.regularization_checkout_reference = attempt_reference
     subscription.regularization_checkout_claim_started_at = timezone.now() - timedelta(
         minutes=6
     )
@@ -427,6 +429,7 @@ def test_reconciliation_command_attaches_verified_checkout(subscription):
             "status",
             "regularization_checkout_state",
             "regularization_checkout_claim",
+            "regularization_checkout_reference",
             "regularization_checkout_claim_started_at",
             "updated_at",
         ]
@@ -449,6 +452,49 @@ def test_reconciliation_command_attaches_verified_checkout(subscription):
         action="BILLING_REGULARIZATION_CHECKOUT_ATTACHED",
         target_id=str(subscription.id),
     ).exists()
+
+
+@pytest.mark.django_db
+def test_legacy_unknown_checkout_requires_explicit_attempt_reference_to_attach(
+    subscription,
+):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.regularization_checkout_state = "RECONCILIATION_REQUIRED"
+    subscription.regularization_checkout_reference = None
+    subscription.save(
+        update_fields=[
+            "status",
+            "regularization_checkout_state",
+            "regularization_checkout_reference",
+            "updated_at",
+        ]
+    )
+
+    with pytest.raises(CommandError, match="referência da tentativa"):
+        call_command(
+            "reconcile_regularization_checkout",
+            subscription_id=subscription.id,
+            verified_checkout_id="chk_legacy_verified",
+            verified_checkout_url="https://asaas.test/legacy-verified",
+        )
+
+    attempt_reference = uuid4()
+    call_command(
+        "reconcile_regularization_checkout",
+        subscription_id=subscription.id,
+        verified_checkout_id="chk_legacy_verified",
+        verified_checkout_url="https://asaas.test/legacy-verified",
+        attempt_reference=str(attempt_reference),
+    )
+
+    subscription.refresh_from_db()
+    assert subscription.regularization_checkout_reference == attempt_reference
+    audit_event = AuditEvent.objects.get(
+        barbershop=subscription.barbershop,
+        action="BILLING_REGULARIZATION_CHECKOUT_ATTACHED",
+        target_id=str(subscription.id),
+    )
+    assert audit_event.metadata["attempt_reference"] == str(attempt_reference)
 
 
 @pytest.mark.django_db
