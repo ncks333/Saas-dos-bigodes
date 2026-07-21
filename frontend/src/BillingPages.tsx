@@ -10,18 +10,36 @@ export type Plan = {code: string; name: string; amount: string; currency: string
 
 declare global {
   interface Window {
-    turnstile?: {render: (element: HTMLElement, options: {sitekey: string; callback: (token: string) => void}) => string};
+    turnstile?: {render: (element: HTMLElement, options: {sitekey: string; callback: (token: string) => void; "error-callback"?: () => void; "expired-callback"?: () => void}) => string};
   }
 }
 
 const money = (amount: string, currency = "BRL") => Number(amount).toLocaleString("pt-BR", {style: "currency", currency});
 const slugify = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
+const backendMessage = (value: unknown): string | null => {
+  if (typeof value === "string" && value.trim()) return value;
+  if (Array.isArray(value)) return value.map(backendMessage).find((message): message is string => Boolean(message)) ?? null;
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  for (const key of ["detail", "details", "message", "error", "non_field_errors"]) {
+    const message = backendMessage(record[key]);
+    if (message) return message;
+  }
+  return Object.entries(record)
+    .filter(([key]) => key !== "code" && key !== "status")
+    .map(([, item]) => backendMessage(item))
+    .find((message): message is string => Boolean(message)) ?? null;
+};
 const errorMessage = (error: unknown) => {
-  if (error instanceof Error) return error.message;
-  if (!axios.isAxiosError(error)) return "Não foi possível concluir esta etapa. Tente novamente.";
-  const detail = error.response?.data?.detail ?? error.response?.data?.message;
-  if (typeof detail === "string") return detail;
-  return error.response?.status === 503 ? "Checkout indisponível. Tente novamente." : "Revise os dados e tente novamente.";
+  if (axios.isAxiosError(error)) {
+    const message = backendMessage(error.response?.data);
+    if (message) return message;
+    if (error.response?.status === 503) return "Checkout indisponível. Tente novamente.";
+    if (!error.response) return "Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.";
+    return "Revise os dados e tente novamente.";
+  }
+  if (error instanceof Error && error.message) return error.message;
+  return "Não foi possível concluir esta etapa. Tente novamente.";
 };
 
 function useCurrentPlan() {
@@ -68,7 +86,6 @@ function StatusMessage({children}: {children: React.ReactNode}) {
 }
 
 export function SignupPage() {
-  usePageMetadata("Começar teste grátis | M&R BarberHub", "Crie a agenda da sua barbearia e comece 30 dias grátis.", "/cadastro");
   const planQuery = useCurrentPlan();
   const [firstName, setFirstName] = useState("");
   const [email, setEmail] = useState("");
@@ -80,20 +97,58 @@ export function SignupPage() {
   const [whatsapp, setWhatsapp] = useState("");
   const [termsAccepted, setTermsAccepted] = useState(false);
   const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY;
-  const [captchaToken, setCaptchaToken] = useState(siteKey ? "" : import.meta.env.DEV ? "development" : "");
+  const useDevelopmentToken = import.meta.env.DEV && !siteKey;
+  const [captchaToken, setCaptchaToken] = useState(useDevelopmentToken ? "development" : "");
+  const [captchaState, setCaptchaState] = useState<"loading" | "ready" | "error">(useDevelopmentToken ? "ready" : siteKey ? "loading" : "error");
+  const [captchaMessage, setCaptchaMessage] = useState(!useDevelopmentToken && !siteKey ? "Verificação anti-bot indisponível. Atualize a página e tente novamente." : "");
+  const [captchaAttempt, setCaptchaAttempt] = useState(0);
   const captchaRef = useRef<HTMLDivElement>(null);
+  const plan = planQuery.data;
+  const trialLabel = plan ? `${plan.trial_days} dias grátis` : "teste grátis";
+  usePageMetadata(`Começar ${trialLabel} | M&R BarberHub`, `Crie a agenda da sua barbearia e comece ${trialLabel}.`, "/cadastro");
 
   useEffect(() => {
+    if (useDevelopmentToken) return;
     if (!siteKey) return;
-    const script = document.createElement("script");
-    script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
-    script.async = true;
-    script.onload = () => {
-      if (captchaRef.current && window.turnstile) window.turnstile.render(captchaRef.current, {sitekey: siteKey, callback: setCaptchaToken});
+    let active = true;
+    let script: HTMLScriptElement | null = null;
+    const fail = () => {
+      if (!active) return;
+      setCaptchaToken("");
+      setCaptchaState("error");
+      setCaptchaMessage("Não foi possível carregar a verificação anti-bot.");
     };
-    document.head.appendChild(script);
-    return () => script.remove();
-  }, [siteKey]);
+    const render = () => {
+      if (!active || !captchaRef.current || !window.turnstile) return fail();
+      captchaRef.current.replaceChildren();
+      setCaptchaState("loading");
+      setCaptchaMessage("");
+      try {
+        window.turnstile.render(captchaRef.current, {
+          sitekey: siteKey,
+          callback: token => {
+            if (!active) return;
+            setCaptchaToken(token);
+            setCaptchaState("ready");
+          },
+          "error-callback": fail,
+          "expired-callback": fail,
+        });
+      } catch {
+        fail();
+      }
+    };
+    if (window.turnstile) render();
+    else {
+      script = document.createElement("script");
+      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      script.async = true;
+      script.onload = render;
+      script.onerror = fail;
+      document.head.appendChild(script);
+    }
+    return () => { active = false; script?.remove(); };
+  }, [captchaAttempt, siteKey, useDevelopmentToken]);
 
   const signup = useMutation({
     mutationFn: async () => {
@@ -118,8 +173,6 @@ export function SignupPage() {
     if (!slugEdited) setSlug(slugify(value));
   };
   const submit = (event: FormEvent) => { event.preventDefault(); signup.mutate(); };
-  const plan = planQuery.data;
-
   return <BillingShell><section className="billing-intro"><p>Agenda pronta para trabalhar</p><h1>Comece sua agenda. <em>O primeiro corte é grátis.</em></h1><span>Sem cobrar hoje. Confirme o checkout com o provedor antes de liberar o painel.</span></section><div className="signup-layout"><form className="billing-card signup-form" onSubmit={submit}>
     <div className="billing-card-heading"><span>Cadastro da barbearia</span><h2>Leva poucos minutos.</h2><p>Campos com * são obrigatórios.</p></div>
     {planQuery.isLoading && <p className="billing-loading" role="status">Carregando condições do plano...</p>}
@@ -135,8 +188,10 @@ export function SignupPage() {
     </div>
     <label className="billing-check"><input required type="checkbox" checked={termsAccepted} onChange={event => setTermsAccepted(event.target.checked)}/><span>Li e aceito os <a href="/privacidade" target="_blank" rel="noreferrer">termos e aviso de privacidade</a>.</span></label>
     <div ref={captchaRef}/>
+    {captchaState === "loading" && siteKey && <p className="billing-loading" role="status">Carregando verificação anti-bot...</p>}
+    {captchaState === "error" && <div className="billing-captcha-error" role="alert"><CircleAlert/><span>{captchaMessage}</span>{siteKey && <button type="button" onClick={() => setCaptchaAttempt(attempt => attempt + 1)}>Tentar novamente</button>}</div>}
     {signup.error && <StatusMessage>{errorMessage(signup.error)}</StatusMessage>}
-    <button className="billing-primary" type="submit" disabled={!plan || !captchaToken || !termsAccepted || signup.isPending} aria-label="Começar 30 dias grátis — continuar para pagamento">{signup.isPending ? "Preparando checkout..." : `Começar ${plan?.trial_days ?? ""} dias grátis`}</button>
+    <button className="billing-primary" type="submit" disabled={!plan || !captchaToken || !termsAccepted || signup.isPending} aria-label={`Começar ${trialLabel} — continuar para pagamento`}>{signup.isPending ? "Preparando checkout..." : `Começar ${trialLabel}`}</button>
     <p className="billing-provider-note">Você será levado ao checkout seguro. Acesso só libera após confirmação do provedor.</p>
   </form>{plan && <PlanReceipt plan={plan}/>}</div></BillingShell>;
 }
@@ -151,7 +206,7 @@ export function CheckoutStatusPage({path}: {path: keyof typeof checkoutCopy}) {
   const copy = checkoutCopy[path];
   usePageMetadata(`${copy.title} | M&R BarberHub`, copy.text, path);
   const Icon = copy.icon;
-  return <BillingShell><section className="billing-state"><div className="billing-state-icon"><Icon/></div><p>{copy.eyebrow}</p><h1>{copy.title}</h1><span>{copy.text}</span><a className="billing-primary" href={path === "/checkout/concluido" ? "/login" : "/cadastro"}>{path === "/checkout/concluido" ? "Ir para login" : "Começar 30 dias grátis"}</a><a className="billing-secondary-link" href="/">Voltar ao início</a></section></BillingShell>;
+  return <BillingShell><section className="billing-state"><div className="billing-state-icon"><Icon/></div><p>{copy.eyebrow}</p><h1>{copy.title}</h1><span>{copy.text}</span><a className="billing-primary" href={path === "/checkout/concluido" ? "/login" : "/cadastro"}>{path === "/checkout/concluido" ? "Ir para login" : "Começar teste grátis"}</a><a className="billing-secondary-link" href="/">Voltar ao início</a></section></BillingShell>;
 }
 
 export function RegularizationPage() {

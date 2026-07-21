@@ -396,3 +396,73 @@ test("checkout informa espera por confirmação do provedor", async ({page}) => 
     await noHorizontalOverflow(page);
   }
 });
+
+test("cadastro mostra erro do backend em português", async ({page}) => {
+  await page.route("**/api/v1/billing/plans/current/", route => route.fulfill({json: currentPlan}));
+  await page.route("**/api/v1/billing/signup/", route => route.fulfill({status: 400, json: {details: {slug: ["Endereço público já está em uso."]}}}));
+  await page.goto("/cadastro");
+  await fillSignup(page);
+  await page.getByRole("button", {name: /Começar 30 dias grátis/}).click();
+  await expect(page.getByRole("alert")).toContainText("Endereço público já está em uso.");
+});
+
+test("cadastro mostra indisponibilidade do checkout", async ({page}) => {
+  await page.route("**/api/v1/billing/plans/current/", route => route.fulfill({json: currentPlan}));
+  await page.route("**/api/v1/billing/signup/", route => route.fulfill({status: 503, json: {}}));
+  await page.goto("/cadastro");
+  await fillSignup(page);
+  await page.getByRole("button", {name: /Começar 30 dias grátis/}).click();
+  await expect(page.getByRole("alert")).toContainText("Checkout indisponível. Tente novamente.");
+});
+
+test("regularização mostra erro serializado e indisponibilidade", async ({page}) => {
+  let unavailable = false;
+  await page.route("**/api/v1/billing/regularization/checkout/", route => route.fulfill(unavailable
+    ? {status: 503, json: {}}
+    : {status: 400, json: {token: ["Token inválido ou expirado."]}}));
+  await page.goto("/regularizar?token=assinatura-segura");
+  await page.getByRole("button", {name: /Regularizar assinatura/}).click();
+  await expect(page.getByRole("alert")).toContainText("Token inválido ou expirado.");
+  unavailable = true;
+  await page.getByRole("button", {name: /Regularizar assinatura/}).click();
+  await expect(page.getByRole("alert")).toContainText("Checkout indisponível. Tente novamente.");
+});
+
+test("cadastro deriva todo período de teste do plano publicado", async ({page}) => {
+  const plan45 = {...currentPlan, trial_days: 45};
+  await page.route("**/api/v1/billing/plans/current/", route => route.fulfill({json: plan45}));
+  await page.goto("/cadastro");
+  await expect(page).toHaveTitle(/45 dias grátis/);
+  await expect(page.getByRole("button", {name: /Começar 45 dias grátis/})).toBeVisible();
+  await expect(page.getByText("45 dias grátis", {exact: true})).toBeVisible();
+  await expect(page.getByText("30 dias grátis")).toHaveCount(0);
+
+  await page.goto("/");
+  await expect(page.getByRole("link", {name: "Começar 45 dias grátis"}).first()).toHaveAttribute("href", "/cadastro");
+  await expect(page.getByText("30 dias grátis")).toHaveCount(0);
+});
+
+test("termos possui alvo de toque de 44px", async ({page}) => {
+  await page.route("**/api/v1/billing/plans/current/", route => route.fulfill({json: currentPlan}));
+  await page.goto("/cadastro");
+  const bounds = await page.locator(".billing-check").evaluate(element => element.getBoundingClientRect());
+  expect(bounds.height).toBeGreaterThanOrEqual(44);
+  await page.getByRole("checkbox", {name: /termos/}).focus();
+  await expect(page.getByRole("checkbox", {name: /termos/})).toBeFocused();
+});
+
+test("Turnstile falho mostra recuperação e permite nova tentativa", async ({page}) => {
+  test.skip(!process.env.VITE_TURNSTILE_SITE_KEY, "executado com site key de teste");
+  await page.route("**/turnstile/v0/api.js**", route => route.abort("failed"));
+  await page.route("**/api/v1/billing/plans/current/", route => route.fulfill({json: currentPlan}));
+  await page.goto("/cadastro");
+  await expect(page.getByRole("alert")).toContainText("Não foi possível carregar a verificação anti-bot.");
+  await page.evaluate(() => {
+    window.turnstile = {render: (_element, options) => { options.callback("turnstile-test-token"); return "turnstile-test-widget"; }};
+  });
+  await page.getByRole("button", {name: "Tentar novamente"}).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByRole("button", {name: /Começar 30 dias grátis/})).toBeDisabled();
+  await fillSignup(page);
+  await expect(page.getByRole("button", {name: /Começar 30 dias grátis/})).toBeEnabled();
+});

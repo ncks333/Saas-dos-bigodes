@@ -246,7 +246,7 @@ function SettingsPage() {
 function SearchBox({value,setValue,placeholder}:{value:string;setValue:(v:string)=>void;placeholder:string}) {return <div className="search-box"><Search/><input value={value} onChange={e=>setValue(e.target.value)} placeholder={placeholder}/></div>}
 function Toggle({checked,setChecked,children}:{checked:boolean;setChecked:(v:boolean)=>void;children:ReactNode}) {return <label className="toggle"><input type="checkbox" checked={checked} onChange={e=>setChecked(e.target.checked)}/><span/>{children}</label>}
 
-declare global {interface Window {turnstile?: {render:(element:HTMLElement,options:{sitekey:string;callback:(token:string)=>void})=>string}}}
+declare global {interface Window {turnstile?: {render:(element:HTMLElement,options:{sitekey:string;callback:(token:string)=>void;"error-callback"?:()=>void;"expired-callback"?:()=>void})=>string}}}
 function PublicBooking({slug}:{slug:string}) {
   usePageMetadata("Agendamento online | M&R BarberHub", "Escolha serviço, data e horário para solicitar seu atendimento.", `/agendar/${slug}`);
   const [service,setService]=useState(""); const [day,setDay]=useState(format(new Date(),"yyyy-MM-dd")); const [slot,setSlot]=useState(""); const [name,setName]=useState(""); const [whatsapp,setWhatsapp]=useState(""); const [privacyAccepted,setPrivacyAccepted]=useState(false); const [captcha,setCaptcha]=useState(import.meta.env.VITE_TURNSTILE_SITE_KEY ? "" : "development"); const captchaRef=useRef<HTMLDivElement>(null);
