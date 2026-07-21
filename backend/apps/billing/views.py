@@ -14,7 +14,11 @@ from .models import BillingWebhookEvent, Subscription, SubscriptionPlan
 from .providers.asaas import AsaasCheckoutError
 from .serializers import PublicPlanSerializer, SignupSerializer
 from .services import provision_signup, sanitize_asaas_webhook_payload
-from .tasks import process_billing_webhook
+from .tasks import (
+    prepare_billing_webhook_dispatch,
+    process_billing_webhook,
+    release_billing_webhook_dispatch,
+)
 
 
 class ProviderUnavailable(APIException):
@@ -101,8 +105,10 @@ class AsaasWebhookView(APIView):
         )
         if created or event.processed_at is None:
             try:
-                process_billing_webhook.delay(event.id)
+                if prepare_billing_webhook_dispatch(event.id, force=True):
+                    process_billing_webhook.delay(event.id)
             except Exception:
+                release_billing_webhook_dispatch(event.id)
                 return Response(status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response({"accepted": True}, status=status.HTTP_202_ACCEPTED)
 

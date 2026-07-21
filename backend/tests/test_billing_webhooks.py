@@ -3,6 +3,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.accounts.models import User
@@ -926,3 +927,308 @@ def test_new_payment_cycle_can_start_fresh_exact_grace(
     assert subscription.grace_payment_id == "pay_new"
     assert subscription.last_payment_id == "pay_new"
     assert subscription.grace_ends_at == new_cycle_at + timedelta(days=7)
+
+
+@pytest.mark.django_db
+def test_chargeback_ignores_different_payment_success_without_provider_timestamp(
+    client, subscription
+):
+    attach_provider_subscription(subscription)
+    chargeback_at = datetime(2026, 7, 20, 12, tzinfo=UTC)
+    post_webhook(
+        client,
+        payment_webhook_payload(
+            "evt_chargeback_before_undated_success",
+            "PAYMENT_CHARGEBACK_REQUESTED",
+            subscription,
+            "pay_chargeback_dated",
+            "CHARGEBACK_REQUESTED",
+            created_at=chargeback_at,
+        ),
+    )
+
+    post_webhook(
+        client,
+        payment_webhook_payload(
+            "evt_undated_success_after_chargeback",
+            "PAYMENT_RECEIVED",
+            subscription,
+            "pay_different_undated",
+            "RECEIVED",
+        ),
+    )
+
+    subscription.refresh_from_db()
+    assert subscription.status == Subscription.Status.SUSPENDED
+    assert subscription.last_payment_id == "pay_chargeback_dated"
+    assert subscription.last_provider_event_at == chargeback_at
+    assert subscription.suspension_reason == "CHARGEBACK"
+
+
+@pytest.mark.django_db
+def test_chargeback_wins_over_different_payment_success_at_equal_timestamp(
+    client, subscription
+):
+    attach_provider_subscription(subscription)
+    tied_at = datetime(2026, 7, 20, 12, tzinfo=UTC)
+    post_webhook(
+        client,
+        payment_webhook_payload(
+            "evt_chargeback_before_tied_success",
+            "PAYMENT_CHARGEBACK_DISPUTE",
+            subscription,
+            "pay_chargeback_tied",
+            "CHARGEBACK_DISPUTE",
+            created_at=tied_at,
+        ),
+    )
+
+    post_webhook(
+        client,
+        payment_webhook_payload(
+            "evt_tied_success_after_chargeback",
+            "PAYMENT_CONFIRMED",
+            subscription,
+            "pay_different_tied",
+            "CONFIRMED",
+            created_at=tied_at,
+        ),
+    )
+
+    subscription.refresh_from_db()
+    assert subscription.status == Subscription.Status.SUSPENDED
+    assert subscription.last_payment_id == "pay_chargeback_tied"
+    assert subscription.last_provider_event_at == tied_at
+    assert subscription.suspension_reason == "CHARGEBACK"
+
+
+@pytest.mark.django_db
+def test_historical_payment_cycle_cannot_reopen_grace_after_later_cycle_succeeds(
+    client, subscription, monkeypatch
+):
+    from apps.billing.models import SubscriptionPaymentCycle
+
+    attach_provider_subscription(subscription)
+    for event_id, event_type, payment_id, payment_status in [
+        ("evt_a_overdue", "PAYMENT_OVERDUE", "pay_a", "OVERDUE"),
+        ("evt_a_success", "PAYMENT_RECEIVED", "pay_a", "RECEIVED"),
+        ("evt_b_overdue", "PAYMENT_OVERDUE", "pay_b", "OVERDUE"),
+        ("evt_b_success", "PAYMENT_RECEIVED", "pay_b", "RECEIVED"),
+        ("evt_a_delayed_overdue", "PAYMENT_OVERDUE", "pay_a", "OVERDUE"),
+    ]:
+        post_webhook(
+            client,
+            payment_webhook_payload(
+                event_id,
+                event_type,
+                subscription,
+                payment_id,
+                payment_status,
+            ),
+        )
+
+    subscription.refresh_from_db()
+    cycle_a = SubscriptionPaymentCycle.objects.get(
+        subscription=subscription, provider_payment_id="pay_a"
+    )
+    cycle_b = SubscriptionPaymentCycle.objects.get(
+        subscription=subscription, provider_payment_id="pay_b"
+    )
+    assert subscription.status == Subscription.Status.ACTIVE
+    assert cycle_a.grace_started_at is not None
+    assert cycle_a.succeeded_at is not None
+    assert cycle_b.grace_started_at is not None
+    assert cycle_b.succeeded_at is not None
+
+    new_cycle_at = timezone.now() + timedelta(days=2)
+    monkeypatch.setattr("apps.billing.services.timezone.now", lambda: new_cycle_at)
+    post_webhook(
+        client,
+        payment_webhook_payload(
+            "evt_c_overdue",
+            "PAYMENT_OVERDUE",
+            subscription,
+            "pay_c",
+            "OVERDUE",
+        ),
+    )
+
+    subscription.refresh_from_db()
+    cycle_c = SubscriptionPaymentCycle.objects.get(
+        subscription=subscription, provider_payment_id="pay_c"
+    )
+    assert subscription.status == Subscription.Status.GRACE
+    assert subscription.grace_ends_at == new_cycle_at + timedelta(days=7)
+    assert cycle_c.grace_started_at == new_cycle_at
+    assert cycle_c.succeeded_at is None
+
+
+@pytest.mark.django_db
+def test_payment_cycle_is_unique_per_subscription_and_provider_payment(subscription):
+    from apps.billing.models import SubscriptionPaymentCycle
+
+    cycle = SubscriptionPaymentCycle.objects.create(
+        subscription=subscription,
+        provider_payment_id="pay_unique",
+    )
+
+    with pytest.raises(IntegrityError), transaction.atomic():
+        SubscriptionPaymentCycle.objects.create(
+            subscription_id=cycle.subscription_id,
+            provider_payment_id=cycle.provider_payment_id,
+        )
+
+
+def create_unprocessed_event(provider_event_id, **metadata):
+    return BillingWebhookEvent.objects.create(
+        provider="ASAAS",
+        provider_event_id=provider_event_id,
+        event_type="UNMAPPED_EVENT",
+        payload={},
+        **metadata,
+    )
+
+
+@pytest.mark.django_db
+def test_recovery_backoff_does_not_starve_newer_eligible_events(monkeypatch):
+    from apps.billing.tasks import redispatch_unprocessed_billing_webhooks
+
+    now = datetime(2026, 7, 21, 12, tzinfo=UTC)
+    for index in range(100):
+        create_unprocessed_event(
+            f"evt_backoff_{index:03d}",
+            next_dispatch_at=now + timedelta(hours=1),
+        )
+    eligible = [
+        create_unprocessed_event("evt_eligible_newer_1"),
+        create_unprocessed_event("evt_eligible_newer_2"),
+    ]
+    dispatched = []
+    monkeypatch.setattr("apps.billing.tasks.timezone.now", lambda: now)
+    monkeypatch.setattr(
+        "apps.billing.tasks.process_billing_webhook.delay", dispatched.append
+    )
+
+    count = redispatch_unprocessed_billing_webhooks.run()
+
+    assert count == 2
+    assert dispatched == [event.id for event in eligible]
+
+
+@pytest.mark.django_db
+def test_recovery_excludes_dead_lettered_events(monkeypatch):
+    from apps.billing.tasks import redispatch_unprocessed_billing_webhooks
+
+    now = datetime(2026, 7, 21, 12, tzinfo=UTC)
+    dead_lettered = create_unprocessed_event(
+        "evt_dead_lettered",
+        dead_lettered_at=now - timedelta(minutes=1),
+    )
+    eligible = create_unprocessed_event("evt_after_dead_letter")
+    dispatched = []
+    monkeypatch.setattr("apps.billing.tasks.timezone.now", lambda: now)
+    monkeypatch.setattr(
+        "apps.billing.tasks.process_billing_webhook.delay", dispatched.append
+    )
+
+    count = redispatch_unprocessed_billing_webhooks.run()
+
+    assert count == 1
+    assert dispatched == [eligible.id]
+    assert dead_lettered.id not in dispatched
+
+
+@pytest.mark.django_db
+def test_recovery_leases_dispatched_event_until_next_eligible_time(monkeypatch):
+    from apps.billing.tasks import redispatch_unprocessed_billing_webhooks
+
+    now = datetime(2026, 7, 21, 12, tzinfo=UTC)
+    event = create_unprocessed_event("evt_dispatch_lease")
+    dispatched = []
+    monkeypatch.setattr("apps.billing.tasks.timezone.now", lambda: now)
+    monkeypatch.setattr(
+        "apps.billing.tasks.process_billing_webhook.delay", dispatched.append
+    )
+
+    first_count = redispatch_unprocessed_billing_webhooks.run()
+    second_count = redispatch_unprocessed_billing_webhooks.run()
+
+    event.refresh_from_db()
+    assert first_count == 1
+    assert second_count == 0
+    assert dispatched == [event.id]
+    assert event.dispatch_attempts == 1
+    assert event.last_dispatched_at == now
+    assert event.next_dispatch_at > now
+
+
+@pytest.mark.django_db
+def test_repeated_processing_failure_backs_off_then_dead_letters():
+    from apps.billing.tasks import (
+        WEBHOOK_MAX_PROCESSING_ATTEMPTS,
+        process_billing_webhook,
+    )
+
+    event = BillingWebhookEvent.objects.create(
+        provider="ASAAS",
+        provider_event_id="evt_bounded_poison",
+        event_type="CHECKOUT_PAID",
+        payload={},
+    )
+    retry_times = []
+    for expected_attempt in range(1, WEBHOOK_MAX_PROCESSING_ATTEMPTS):
+        with pytest.raises(ValueError):
+            process_billing_webhook.run(event.id)
+        event.refresh_from_db()
+        assert event.processing_attempts == expected_attempt
+        assert event.last_processing_attempt_at is not None
+        assert event.next_dispatch_at > event.last_processing_attempt_at
+        assert event.dead_lettered_at is None
+        assert event.processing_error == "ValueError"
+        retry_times.append(event.next_dispatch_at)
+
+    process_billing_webhook.run(event.id)
+
+    event.refresh_from_db()
+    assert retry_times == sorted(retry_times)
+    assert event.processing_attempts == WEBHOOK_MAX_PROCESSING_ATTEMPTS
+    assert event.dead_lettered_at is not None
+    assert event.next_dispatch_at is None
+    assert event.processed_at is None
+    assert event.processing_error == "ValueError"
+
+
+@pytest.mark.django_db
+def test_successful_processing_atomically_clears_retry_schedule():
+    from apps.billing.tasks import process_billing_webhook
+
+    now = timezone.now()
+    event = BillingWebhookEvent.objects.create(
+        provider="ASAAS",
+        provider_event_id="evt_success_after_retry",
+        event_type="UNMAPPED_EVENT",
+        payload={},
+        processing_attempts=2,
+        processing_error="ValueError",
+        last_processing_attempt_at=now - timedelta(minutes=1),
+        next_dispatch_at=now + timedelta(minutes=1),
+    )
+
+    process_billing_webhook.run(event.id)
+
+    event.refresh_from_db()
+    assert event.processed_at is not None
+    assert event.processing_error == ""
+    assert event.next_dispatch_at is None
+    assert event.dead_lettered_at is None
+
+
+def test_webhook_recovery_has_eligibility_index():
+    index_fields = {tuple(index.fields) for index in BillingWebhookEvent._meta.indexes}
+
+    assert (
+        "processed_at",
+        "dead_lettered_at",
+        "next_dispatch_at",
+        "id",
+    ) in index_fields

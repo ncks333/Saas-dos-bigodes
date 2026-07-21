@@ -10,7 +10,7 @@ from apps.accounts.models import User
 from apps.audit import services as audit_services
 from apps.barbershops.models import Barbershop, OperatingHour
 
-from .models import Subscription
+from .models import Subscription, SubscriptionPaymentCycle
 from .providers.asaas import cancel_checkout, create_recurring_checkout
 
 logger = logging.getLogger(__name__)
@@ -160,6 +160,13 @@ def _locked_payment_subscription(event):
     return subscription, payment_id, payment_status
 
 
+def _locked_payment_cycle(subscription, payment_id):
+    return SubscriptionPaymentCycle.objects.select_for_update().get_or_create(
+        subscription=subscription,
+        provider_payment_id=payment_id,
+    )[0]
+
+
 def activate_payment_from_webhook(event):
     subscription, payment_id, payment_status = _locked_payment_subscription(event)
     event_at = _provider_event_at(event)
@@ -170,9 +177,18 @@ def activate_payment_from_webhook(event):
     if (
         subscription.status == Subscription.Status.SUSPENDED
         and subscription.suspension_reason == "CHARGEBACK"
-        and subscription.last_payment_id == payment_id
     ):
-        return
+        if (
+            subscription.last_payment_id == payment_id
+            or event_at is None
+            or subscription.last_provider_event_at is None
+            or event_at <= subscription.last_provider_event_at
+        ):
+            return
+    payment_cycle = _locked_payment_cycle(subscription, payment_id)
+    if payment_cycle.succeeded_at is None:
+        payment_cycle.succeeded_at = event_at or timezone.now()
+        payment_cycle.save(update_fields=["succeeded_at", "updated_at"])
     was_restricted = subscription.status in {
         Subscription.Status.GRACE,
         Subscription.Status.SUSPENDED,
@@ -215,15 +231,16 @@ def start_payment_grace_from_webhook(event):
             subscription.status == Subscription.Status.SUSPENDED
             and subscription.suspension_reason == "CHARGEBACK"
         )
-        or subscription.grace_payment_id == payment_id
-        or (
-            subscription.status == Subscription.Status.ACTIVE
-            and subscription.last_payment_id == payment_id
-        )
     ):
         return
+    payment_cycle = _locked_payment_cycle(subscription, payment_id)
+    if payment_cycle.grace_started_at is not None or payment_cycle.succeeded_at is not None:
+        return
+    grace_started_at = timezone.now()
+    payment_cycle.grace_started_at = grace_started_at
+    payment_cycle.save(update_fields=["grace_started_at", "updated_at"])
     subscription.status = Subscription.Status.GRACE
-    subscription.grace_ends_at = timezone.now() + timedelta(days=7)
+    subscription.grace_ends_at = grace_started_at + timedelta(days=7)
     subscription.last_payment_id = payment_id
     subscription.grace_payment_id = payment_id
     subscription.last_payment_status = payment_status

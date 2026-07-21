@@ -68,6 +68,25 @@ class Subscription(TimestampedModel):
         self.status = self.Status.GRACE
 
 
+class SubscriptionPaymentCycle(TimestampedModel):
+    subscription = models.ForeignKey(
+        Subscription,
+        on_delete=models.CASCADE,
+        related_name="payment_cycles",
+    )
+    provider_payment_id = models.CharField(max_length=100)
+    grace_started_at = models.DateTimeField(null=True, blank=True)
+    succeeded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["subscription", "provider_payment_id"],
+                name="unique_sub_provider_payment",
+            )
+        ]
+
+
 class BillingWebhookEvent(TimestampedModel):
     provider = models.CharField(max_length=20)
     provider_event_id = models.CharField(max_length=150)
@@ -75,9 +94,26 @@ class BillingWebhookEvent(TimestampedModel):
     payload = models.JSONField(default=dict)
     processed_at = models.DateTimeField(null=True, blank=True)
     processing_error = models.CharField(max_length=300, blank=True)
+    dispatch_attempts = models.PositiveIntegerField(default=0)
+    processing_attempts = models.PositiveIntegerField(default=0)
+    last_dispatched_at = models.DateTimeField(null=True, blank=True)
+    last_processing_attempt_at = models.DateTimeField(null=True, blank=True)
+    next_dispatch_at = models.DateTimeField(null=True, blank=True)
+    dead_lettered_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["provider", "provider_event_id"], name="unique_billing_provider_event")]
+        indexes = [
+            models.Index(
+                fields=[
+                    "processed_at",
+                    "dead_lettered_at",
+                    "next_dispatch_at",
+                    "id",
+                ],
+                name="billing_wh_recovery_idx",
+            )
+        ]
 
 
 class BillingNotificationLog(TimestampedModel):
