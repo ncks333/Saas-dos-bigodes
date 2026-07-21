@@ -1,6 +1,8 @@
 import logging
+import time as time_module
 from collections.abc import Mapping
 from datetime import UTC, time, timedelta
+from uuid import uuid4
 
 from django.core.signing import TimestampSigner
 from django.db import transaction
@@ -13,6 +15,8 @@ from apps.barbershops.models import Barbershop, OperatingHour
 
 from .models import Subscription, SubscriptionPaymentCycle
 from .providers.asaas import (
+    AsaasCheckoutError,
+    CheckoutResult,
     cancel_checkout,
     create_recurring_checkout,
     create_regularization_checkout,
@@ -22,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 REGULARIZATION_TOKEN_SALT = "billing-regularization"
 REGULARIZATION_TOKEN_MAX_AGE = 60 * 60
+REGULARIZATION_CHECKOUT_WAIT_SECONDS = 12
+REGULARIZATION_CHECKOUT_POLL_SECONDS = 0.05
 
 SAFE_WEBHOOK_FIELDS = {
     "checkout": {
@@ -131,20 +137,62 @@ def activate_checkout_from_webhook(event):
         provider=Subscription.Provider.ASAAS,
     )
     event_at = _provider_event_at(event)
+    if _is_stale_provider_event(subscription, event_at):
+        return
+    if subscription.status == Subscription.Status.PENDING_CHECKOUT:
+        subscription.provider_checkout_id = checkout_id
+        subscription.provider_subscription_id = provider_subscription_id
+        subscription.status = Subscription.Status.TRIAL
+        _save_transition(
+            subscription,
+            [
+                "provider_checkout_id",
+                "provider_subscription_id",
+                "status",
+            ],
+            event_at,
+        )
+        User.objects.filter(
+            barbershop_id=subscription.barbershop_id,
+            is_active=False,
+        ).update(is_active=True)
+        _audit_transition(event, subscription, "BILLING_TRIAL_ACTIVATED")
+        return
+
     if (
-        subscription.status != Subscription.Status.PENDING_CHECKOUT
-        or _is_stale_provider_event(subscription, event_at)
+        subscription.status not in {
+            Subscription.Status.SUSPENDED,
+            Subscription.Status.CANCELED,
+        }
+        or subscription.regularization_checkout_state
+        != Subscription.RegularizationCheckoutState.CREATED
+        or subscription.regularization_checkout_id != checkout_id
     ):
         return
+
     subscription.provider_checkout_id = checkout_id
     subscription.provider_subscription_id = provider_subscription_id
-    subscription.status = Subscription.Status.TRIAL
+    subscription.regularization_checkout_state = (
+        Subscription.RegularizationCheckoutState.PAID
+    )
+    subscription.regularization_checkout_claim = None
+    subscription.status = Subscription.Status.ACTIVE
+    subscription.grace_ends_at = None
+    subscription.suspended_at = None
+    subscription.suspension_reason = ""
+    subscription.canceled_at = None
     _save_transition(
         subscription,
         [
             "provider_checkout_id",
             "provider_subscription_id",
+            "regularization_checkout_state",
+            "regularization_checkout_claim",
             "status",
+            "grace_ends_at",
+            "suspended_at",
+            "suspension_reason",
+            "canceled_at",
         ],
         event_at,
     )
@@ -152,7 +200,7 @@ def activate_checkout_from_webhook(event):
         barbershop_id=subscription.barbershop_id,
         is_active=False,
     ).update(is_active=True)
-    _audit_transition(event, subscription, "BILLING_TRIAL_ACTIVATED")
+    _audit_transition(event, subscription, "BILLING_SUBSCRIPTION_REACTIVATED")
 
 
 def _locked_payment_subscription(event):
@@ -408,15 +456,34 @@ def regularization_subscription_from_token(token):
     )
 
 
-def provision_regularization_checkout(subscription):
+def _claim_regularization_checkout(subscription_id):
     with transaction.atomic():
         subscription = (
             Subscription.objects.select_for_update()
             .select_related("barbershop", "plan")
-            .get(pk=subscription.pk)
+            .get(pk=subscription_id)
         )
         if subscription.allows_access:
-            return None
+            return None, None, None
+        if (
+            subscription.regularization_checkout_state
+            == Subscription.RegularizationCheckoutState.CREATED
+            and subscription.regularization_checkout_id
+            and subscription.regularization_checkout_url
+        ):
+            return (
+                CheckoutResult(
+                    id=subscription.regularization_checkout_id,
+                    url=subscription.regularization_checkout_url,
+                ),
+                None,
+                None,
+            )
+        if (
+            subscription.regularization_checkout_state
+            == Subscription.RegularizationCheckoutState.CREATING
+        ):
+            return None, subscription.regularization_checkout_claim, None
         admin = (
             User.objects.filter(
                 barbershop_id=subscription.barbershop_id,
@@ -427,7 +494,131 @@ def provision_regularization_checkout(subscription):
         )
         if admin is None:
             raise ValueError("Assinatura sem administrador para regularização.")
-        checkout = create_regularization_checkout(subscription, admin)
+        claim = uuid4()
+        subscription.regularization_checkout_state = (
+            Subscription.RegularizationCheckoutState.CREATING
+        )
+        subscription.regularization_checkout_claim = claim
+        subscription.regularization_checkout_id = ""
+        subscription.regularization_checkout_url = ""
+        subscription.save(
+            update_fields=[
+                "regularization_checkout_state",
+                "regularization_checkout_claim",
+                "regularization_checkout_id",
+                "regularization_checkout_url",
+                "updated_at",
+            ]
+        )
+    return None, claim, (subscription, admin)
+
+
+def _persist_regularization_checkout(subscription_id, claim, checkout):
+    with transaction.atomic():
+        subscription = Subscription.objects.select_for_update().get(pk=subscription_id)
+        if (
+            subscription.regularization_checkout_state
+            != Subscription.RegularizationCheckoutState.CREATING
+            or subscription.regularization_checkout_claim != claim
+            or subscription.allows_access
+        ):
+            raise ValueError("Checkout de regularização não está mais disponível.")
+        subscription.regularization_checkout_state = (
+            Subscription.RegularizationCheckoutState.CREATED
+        )
+        subscription.regularization_checkout_claim = None
+        subscription.regularization_checkout_id = checkout.id
+        subscription.regularization_checkout_url = checkout.url
         subscription.provider_checkout_id = checkout.id
-        subscription.save(update_fields=["provider_checkout_id", "updated_at"])
-    return checkout
+        subscription.save(
+            update_fields=[
+                "regularization_checkout_state",
+                "regularization_checkout_claim",
+                "regularization_checkout_id",
+                "regularization_checkout_url",
+                "provider_checkout_id",
+                "updated_at",
+            ]
+        )
+
+
+def _release_regularization_checkout_claim(subscription_id, claim):
+    with transaction.atomic():
+        subscription = Subscription.objects.select_for_update().get(pk=subscription_id)
+        if (
+            subscription.regularization_checkout_state
+            != Subscription.RegularizationCheckoutState.CREATING
+            or subscription.regularization_checkout_claim != claim
+        ):
+            return
+        subscription.regularization_checkout_state = (
+            Subscription.RegularizationCheckoutState.READY
+        )
+        subscription.regularization_checkout_claim = None
+        subscription.save(
+            update_fields=[
+                "regularization_checkout_state",
+                "regularization_checkout_claim",
+                "updated_at",
+            ]
+        )
+
+
+def _wait_for_regularization_checkout(subscription_id, claim):
+    deadline = time_module.monotonic() + REGULARIZATION_CHECKOUT_WAIT_SECONDS
+    while time_module.monotonic() < deadline:
+        subscription = Subscription.objects.get(pk=subscription_id)
+        if subscription.allows_access:
+            return None
+        if (
+            subscription.regularization_checkout_state
+            == Subscription.RegularizationCheckoutState.CREATED
+            and subscription.regularization_checkout_id
+            and subscription.regularization_checkout_url
+        ):
+            return CheckoutResult(
+                id=subscription.regularization_checkout_id,
+                url=subscription.regularization_checkout_url,
+            )
+        if (
+            subscription.regularization_checkout_state
+            != Subscription.RegularizationCheckoutState.CREATING
+            or subscription.regularization_checkout_claim != claim
+        ):
+            return False
+        time_module.sleep(REGULARIZATION_CHECKOUT_POLL_SECONDS)
+    raise AsaasCheckoutError("Checkout de regularização ainda está sendo criado")
+
+
+def provision_regularization_checkout(subscription):
+    for _ in range(2):
+        existing_checkout, claim, creation_context = _claim_regularization_checkout(
+            subscription.pk
+        )
+        if existing_checkout is not None:
+            return existing_checkout
+        if creation_context is None:
+            waiting_checkout = _wait_for_regularization_checkout(subscription.pk, claim)
+            if waiting_checkout is not False:
+                return waiting_checkout
+            continue
+
+        claimed_subscription, admin = creation_context
+        try:
+            checkout = create_regularization_checkout(claimed_subscription, admin)
+        except Exception:
+            _release_regularization_checkout_claim(subscription.pk, claim)
+            raise
+        try:
+            _persist_regularization_checkout(subscription.pk, claim, checkout)
+        except Exception:
+            try:
+                cancel_checkout(checkout.id)
+            except Exception:
+                logger.warning(
+                    "Checkout compensation failed after regularization persistence error"
+                )
+            _release_regularization_checkout_claim(subscription.pk, claim)
+            raise
+        return checkout
+    raise AsaasCheckoutError("Checkout de regularização indisponível")

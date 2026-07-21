@@ -3,13 +3,14 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from django.core import mail
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.audit.models import AuditEvent
 from apps.barbershops.models import Barbershop
-from apps.billing.models import BillingWebhookEvent, Subscription
+from apps.billing.models import BillingNotificationLog, BillingWebhookEvent, Subscription
 
 
 WEBHOOK_URL = "/api/v1/billing/webhooks/asaas/"
@@ -143,6 +144,77 @@ def test_checkout_paid_activates_tenant_users_exactly_once_without_enabling_shop
         barbershop=shop,
         action="BILLING_TRIAL_ACTIVATED",
         target_id=str(pending_subscription.id),
+    ).count() == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    "starting_status", [Subscription.Status.SUSPENDED, Subscription.Status.CANCELED]
+)
+def test_regularization_checkout_paid_reactivates_blocked_subscription_once(
+    client, subscription, user, starting_status
+):
+    previous_provider_subscription_id = "sub_old"
+    subscription.status = starting_status
+    subscription.provider_subscription_id = previous_provider_subscription_id
+    subscription.regularization_checkout_id = "chk_regularization"
+    subscription.regularization_checkout_url = "https://asaas.test/regularization"
+    subscription.regularization_checkout_state = "CREATED"
+    subscription.suspended_at = timezone.now()
+    subscription.suspension_reason = "GRACE_EXPIRED"
+    subscription.canceled_at = timezone.now()
+    subscription.save(
+        update_fields=[
+            "status",
+            "provider_subscription_id",
+            "regularization_checkout_id",
+            "regularization_checkout_url",
+            "regularization_checkout_state",
+            "suspended_at",
+            "suspension_reason",
+            "canceled_at",
+            "updated_at",
+        ]
+    )
+    user.is_active = False
+    user.save(update_fields=["is_active"])
+    payload = {
+        "id": f"evt_regularization_{starting_status.lower()}",
+        "event": "CHECKOUT_PAID",
+        "checkout": {
+            "id": "chk_regularization",
+            "externalReference": str(subscription.external_reference),
+        },
+        "subscription": {"id": "sub_regularized"},
+    }
+
+    first = post_webhook(client, payload)
+    second = post_webhook(client, payload)
+
+    subscription.refresh_from_db()
+    user.refresh_from_db()
+    assert first.status_code == second.status_code == 202
+    assert subscription.status == Subscription.Status.ACTIVE
+    assert subscription.provider_checkout_id == "chk_regularization"
+    assert subscription.provider_subscription_id == "sub_regularized"
+    assert subscription.regularization_checkout_state == "PAID"
+    assert subscription.suspended_at is None
+    assert subscription.canceled_at is None
+    assert user.is_active is True
+    login = client.post(
+        "/api/v1/auth/login/",
+        {"username": user.username, "password": "Senha123"},
+    )
+    assert login.status_code == 200
+    assert BillingNotificationLog.objects.filter(
+        subscription=subscription, kind="REACTIVATED", status="SENT"
+    ).count() == 1
+    assert len(mail.outbox) == 1
+    assert mail.outbox[0].subject == "Assinatura reativada"
+    assert AuditEvent.objects.filter(
+        barbershop=subscription.barbershop,
+        action="BILLING_SUBSCRIPTION_REACTIVATED",
+        target_id=str(subscription.id),
     ).count() == 1
 
 

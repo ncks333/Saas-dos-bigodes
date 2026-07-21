@@ -1,4 +1,5 @@
 from unittest.mock import patch
+from uuid import uuid4
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -9,6 +10,8 @@ from django.core.signing import TimestampSigner
 from apps.accounts.models import User
 from apps.billing.models import Subscription
 from apps.billing.providers.asaas import CheckoutResult
+from apps.billing.services import provision_regularization_checkout
+from apps.billing.tasks import send_regularization_request_email
 
 
 SUBSCRIPTION_REQUIRED = "subscription_required"
@@ -98,6 +101,74 @@ def test_regularization_request_does_not_enumerate_email_and_only_emails_admins(
 
 
 @pytest.mark.django_db
+def test_regularization_request_enqueues_every_normalized_email_with_identical_response(
+    client, user, subscription, monkeypatch
+):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.save(update_fields=["status", "updated_at"])
+    queued = []
+    monkeypatch.setattr(
+        "apps.billing.views.send_regularization_request_email.delay",
+        lambda email: queued.append(email),
+    )
+
+    known = client.post(
+        "/api/v1/billing/regularization/request/", {"email": user.email.upper()}
+    )
+    unknown = client.post(
+        "/api/v1/billing/regularization/request/", {"email": "NOBODY@example.com"}
+    )
+
+    assert known.status_code == unknown.status_code == 200
+    assert known.data == unknown.data == {"message": REGULARIZATION_MESSAGE}
+    assert queued == [user.email, "nobody@example.com"]
+    assert mail.outbox == []
+
+
+@pytest.mark.django_db
+def test_regularization_request_task_emails_only_blocked_admin(user, subscription):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.save(update_fields=["status", "updated_at"])
+
+    send_regularization_request_email.run(user.email)
+
+    assert len(mail.outbox) == 1
+    assert mail.outbox[0].to == [user.email]
+
+
+@pytest.mark.django_db
+def test_regularization_request_hides_mail_task_failure(client, user, subscription, monkeypatch):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.save(update_fields=["status", "updated_at"])
+    monkeypatch.setattr(
+        "apps.billing.tasks.send_mail",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("mail unavailable")),
+    )
+
+    response = client.post(
+        "/api/v1/billing/regularization/request/", {"email": user.email}
+    )
+
+    assert response.status_code == 200
+    assert response.data == {"message": REGULARIZATION_MESSAGE}
+
+
+@pytest.mark.django_db
+def test_regularization_request_hides_broker_failure(client, monkeypatch):
+    monkeypatch.setattr(
+        "apps.billing.views.send_regularization_request_email.delay",
+        lambda _email: (_ for _ in ()).throw(RuntimeError("broker unavailable")),
+    )
+
+    response = client.post(
+        "/api/v1/billing/regularization/request/", {"email": "nobody@example.com"}
+    )
+
+    assert response.status_code == 200
+    assert response.data == {"message": REGULARIZATION_MESSAGE}
+
+
+@pytest.mark.django_db
 def test_valid_regularization_token_returns_and_persists_hosted_checkout(
     client, user, subscription, monkeypatch
 ):
@@ -122,6 +193,113 @@ def test_valid_regularization_token_returns_and_persists_hosted_checkout(
     assert response.data == {"checkout_url": "https://asaas.test/reg"}
     subscription.refresh_from_db()
     assert subscription.provider_checkout_id == "chk_reg"
+
+
+@pytest.mark.django_db
+def test_regularization_checkout_reuses_persisted_checkout_without_provider_retry(
+    subscription, user, monkeypatch
+):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.save(update_fields=["status", "updated_at"])
+    calls = []
+    monkeypatch.setattr(
+        "apps.billing.services.create_regularization_checkout",
+        lambda _subscription, _user: calls.append(True)
+        or CheckoutResult(id="chk_reused", url="https://asaas.test/reused"),
+    )
+
+    first = provision_regularization_checkout(subscription)
+    second = provision_regularization_checkout(subscription)
+
+    subscription.refresh_from_db()
+    assert first == second == CheckoutResult(
+        id="chk_reused", url="https://asaas.test/reused"
+    )
+    assert calls == [True]
+    assert subscription.regularization_checkout_id == "chk_reused"
+    assert subscription.regularization_checkout_url == "https://asaas.test/reused"
+
+
+@pytest.mark.django_db
+def test_regularization_checkout_waits_for_concurrent_claim_without_provider_retry(
+    subscription, monkeypatch
+):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.regularization_checkout_state = "CREATING"
+    subscription.regularization_checkout_claim = uuid4()
+    subscription.save(
+        update_fields=[
+            "status",
+            "regularization_checkout_state",
+            "regularization_checkout_claim",
+            "updated_at",
+        ]
+    )
+    monkeypatch.setattr(
+        "apps.billing.services._wait_for_regularization_checkout",
+        lambda *_args: CheckoutResult(
+            id="chk_concurrent", url="https://asaas.test/concurrent"
+        ),
+    )
+    monkeypatch.setattr(
+        "apps.billing.services.create_regularization_checkout",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("provider called twice")),
+    )
+
+    checkout = provision_regularization_checkout(subscription)
+
+    assert checkout == CheckoutResult(
+        id="chk_concurrent", url="https://asaas.test/concurrent"
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_regularization_checkout_provider_call_runs_outside_transaction(
+    subscription, user, monkeypatch
+):
+    from django.db import connection
+
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.save(update_fields=["status", "updated_at"])
+
+    def create_checkout(_subscription, _user):
+        assert connection.in_atomic_block is False
+        return CheckoutResult(id="chk_unlocked", url="https://asaas.test/unlocked")
+
+    monkeypatch.setattr(
+        "apps.billing.services.create_regularization_checkout", create_checkout
+    )
+
+    checkout = provision_regularization_checkout(subscription)
+
+    assert checkout.id == "chk_unlocked"
+
+
+@pytest.mark.django_db
+def test_regularization_checkout_cancels_provider_checkout_when_persistence_fails(
+    subscription, user, monkeypatch
+):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.save(update_fields=["status", "updated_at"])
+    canceled = []
+    monkeypatch.setattr(
+        "apps.billing.services.create_regularization_checkout",
+        lambda _subscription, _user: CheckoutResult(
+            id="chk_compensate", url="https://asaas.test/compensate"
+        ),
+    )
+    monkeypatch.setattr(
+        "apps.billing.services._persist_regularization_checkout",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("database unavailable")),
+    )
+    monkeypatch.setattr(
+        "apps.billing.services.cancel_checkout", lambda checkout_id: canceled.append(checkout_id)
+    )
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        provision_regularization_checkout(subscription)
+
+    assert canceled == ["chk_compensate"]
 
 
 @pytest.mark.django_db

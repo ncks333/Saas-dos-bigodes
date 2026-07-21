@@ -32,6 +32,12 @@ class Subscription(TimestampedModel):
     class Provider(models.TextChoices):
         ASAAS = "ASAAS", "Asaas"
 
+    class RegularizationCheckoutState(models.TextChoices):
+        READY = "READY", "Pronto"
+        CREATING = "CREATING", "Criando"
+        CREATED = "CREATED", "Criado"
+        PAID = "PAID", "Pago"
+
     barbershop = models.OneToOneField("barbershops.Barbershop", on_delete=models.CASCADE, related_name="subscription")
     plan = models.ForeignKey(SubscriptionPlan, on_delete=models.PROTECT, related_name="subscriptions")
     status = models.CharField(max_length=24, choices=Status.choices, default=Status.PENDING_CHECKOUT)
@@ -39,6 +45,14 @@ class Subscription(TimestampedModel):
     provider_customer_id = models.CharField(max_length=100, blank=True)
     provider_subscription_id = models.CharField(max_length=100, blank=True, db_index=True)
     provider_checkout_id = models.CharField(max_length=100, blank=True)
+    regularization_checkout_state = models.CharField(
+        max_length=16,
+        choices=RegularizationCheckoutState.choices,
+        default=RegularizationCheckoutState.READY,
+    )
+    regularization_checkout_claim = models.UUIDField(null=True, blank=True, editable=False)
+    regularization_checkout_id = models.CharField(max_length=100, blank=True)
+    regularization_checkout_url = models.URLField(max_length=500, blank=True)
     external_reference = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     trial_days = models.PositiveSmallIntegerField(default=30)
     trial_ends_at = models.DateTimeField(null=True, blank=True)

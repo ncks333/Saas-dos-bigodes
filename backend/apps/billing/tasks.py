@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from celery import shared_task
 from django.conf import settings
+from django.core.mail import send_mail
 from django.core.mail import EmailMultiAlternatives
 from django.db import IntegrityError, transaction
 from django.db.models import Q
@@ -17,6 +18,7 @@ from .services import (
     activate_checkout_from_webhook,
     activate_payment_from_webhook,
     cancel_subscription_from_webhook,
+    make_regularization_token,
     start_payment_grace_from_webhook,
     suspend_chargeback_from_webhook,
 )
@@ -87,6 +89,29 @@ BILLING_EMAIL_TEMPLATES = {
 }
 
 
+@shared_task
+def send_regularization_request_email(normalized_email):
+    user = (
+        User.objects.filter(email__iexact=normalized_email, role=User.Role.ADMIN)
+        .select_related("barbershop")
+        .first()
+    )
+    if user is None or user.barbershop_id is None:
+        return False
+    subscription = Subscription.objects.filter(barbershop_id=user.barbershop_id).first()
+    if subscription is None or subscription.allows_access:
+        return False
+    token = make_regularization_token(subscription)
+    regularization_url = f"{settings.FRONTEND_URL.rstrip('/')}/regularizar?token={token}"
+    send_mail(
+        "Regularização de assinatura",
+        "Use este link para regularizar sua assinatura:\n\n" f"{regularization_url}",
+        None,
+        [user.email],
+    )
+    return True
+
+
 def _event_subscription(event):
     if event.event_type == "CHECKOUT_PAID":
         external_reference = event.payload.get("checkout", {}).get("externalReference")
@@ -125,6 +150,16 @@ def _apply_transition(event):
                 and subscription.status == Subscription.Status.TRIAL
             ):
                 return "TRIAL_ACTIVATED"
+            if (
+                prior_status
+                in {Subscription.Status.SUSPENDED, Subscription.Status.CANCELED}
+                and subscription.status == Subscription.Status.ACTIVE
+                and subscription.provider_checkout_id
+                == event.payload.get("checkout", {}).get("id")
+                and subscription.regularization_checkout_state
+                == Subscription.RegularizationCheckoutState.PAID
+            ):
+                return "REACTIVATED"
     elif event.event_type in PAYMENT_SUCCESS_EVENTS:
         activate_payment_from_webhook(event)
         if subscription is not None:

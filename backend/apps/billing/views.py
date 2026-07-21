@@ -1,9 +1,7 @@
 import hmac
 from collections.abc import Mapping
-from urllib.parse import urlencode
 
 from django.conf import settings
-from django.core.mail import send_mail
 from django.core.signing import BadSignature
 from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
@@ -15,8 +13,6 @@ from rest_framework.views import APIView
 
 from core.security.turnstile import verify_turnstile
 
-from apps.accounts.models import User
-
 from .models import BillingWebhookEvent, Subscription, SubscriptionPlan
 from .providers.asaas import AsaasCheckoutError
 from .serializers import (
@@ -26,7 +22,6 @@ from .serializers import (
     SignupSerializer,
 )
 from .services import (
-    make_regularization_token,
     provision_regularization_checkout,
     provision_signup,
     regularization_subscription_from_token,
@@ -36,6 +31,7 @@ from .tasks import (
     prepare_billing_webhook_dispatch,
     process_billing_webhook,
     release_billing_webhook_dispatch,
+    send_regularization_request_email,
 )
 from .throttles import RegularizationCheckoutThrottle, RegularizationRequestThrottle
 
@@ -99,31 +95,12 @@ class RegularizationRequestView(APIView):
     def post(self, request):
         serializer = RegularizationRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = (
-            User.objects.filter(
-                email__iexact=serializer.validated_data["email"],
-                role=User.Role.ADMIN,
+        try:
+            send_regularization_request_email.delay(
+                serializer.validated_data["email"]
             )
-            .select_related("barbershop")
-            .first()
-        )
-        if user is not None and user.barbershop_id:
-            subscription = Subscription.objects.filter(
-                barbershop_id=user.barbershop_id
-            ).first()
-            if subscription is not None and not subscription.allows_access:
-                token = make_regularization_token(subscription)
-                regularization_url = (
-                    f"{settings.FRONTEND_URL.rstrip('/')}/regularizar?"
-                    f"{urlencode({'token': token})}"
-                )
-                send_mail(
-                    "Regularização de assinatura",
-                    "Use este link para regularizar sua assinatura:\n\n"
-                    f"{regularization_url}",
-                    None,
-                    [user.email],
-                )
+        except Exception:
+            pass
         return Response(
             {
                 "message": (

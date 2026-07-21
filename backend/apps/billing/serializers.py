@@ -52,6 +52,9 @@ class SignupSerializer(serializers.Serializer):
 class RegularizationRequestSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
+    def validate_email(self, value):
+        return value.lower()
+
 
 class RegularizationCheckoutSerializer(serializers.Serializer):
     token = serializers.CharField(max_length=512, trim_whitespace=False)

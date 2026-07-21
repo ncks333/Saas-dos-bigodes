@@ -170,6 +170,8 @@ def test_0003_migration_backfills_payment_cycle_history_and_blocks_delayed_grace
             hours=3
         )
 
+        executor = MigrationExecutor(connection)
+        executor.migrate(original_targets)
         delayed = BillingWebhookEvent.objects.create(
             provider="ASAAS",
             provider_event_id="evt_delayed_a_after_migration",
