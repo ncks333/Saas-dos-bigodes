@@ -1,11 +1,14 @@
 import logging
 import time as time_module
 from collections.abc import Mapping
-from datetime import UTC, time, timedelta
+from datetime import UTC, datetime, time, timedelta
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
+from django.conf import settings
 from django.core.signing import TimestampSigner
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -22,6 +25,7 @@ from .providers.asaas import (
     cancel_checkout,
     create_recurring_checkout,
     create_regularization_checkout,
+    reconcile_paid_checkout,
     validate_checkout_url,
 )
 
@@ -37,6 +41,7 @@ SAFE_WEBHOOK_FIELDS = {
     "checkout": {
         "id": 100,
         "externalReference": 36,
+        "status": 50,
     },
     "subscription": {"id": 100},
     "payment": {
@@ -60,8 +65,8 @@ def sanitize_asaas_webhook_payload(payload):
     projection = {}
     date_created = payload.get("dateCreated")
     if isinstance(date_created, str) and len(date_created) <= 64:
-        parsed_date_created = parse_datetime(date_created)
-        if parsed_date_created is not None and timezone.is_aware(parsed_date_created):
+        parsed_date_created = _normalize_provider_datetime(date_created)
+        if parsed_date_created is not None:
             projection["dateCreated"] = parsed_date_created.astimezone(UTC).isoformat()
     for object_name, safe_fields in SAFE_WEBHOOK_FIELDS.items():
         provider_object = payload.get(object_name)
@@ -77,6 +82,17 @@ def sanitize_asaas_webhook_payload(payload):
         if safe_object:
             projection[object_name] = safe_object
     return projection
+
+
+def _normalize_provider_datetime(value):
+    parsed = parse_datetime(value)
+    if parsed is not None and timezone.is_aware(parsed):
+        return parsed
+    try:
+        local_datetime = datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+    return local_datetime.replace(tzinfo=ZoneInfo(settings.ASAAS_PROVIDER_TIMEZONE))
 
 
 def _required_provider_value(event, object_name, field):
@@ -114,6 +130,26 @@ def _provider_event_at(event):
     return parsed
 
 
+def checkout_subscription_from_webhook(event, *, lock=False):
+    checkout = event.payload.get("checkout")
+    if not isinstance(checkout, dict):
+        return None
+    checkout_id = checkout.get("id")
+    if not isinstance(checkout_id, str) or not checkout_id:
+        return None
+    subscriptions = Subscription.objects.filter(
+        Q(provider_checkout_id=checkout_id)
+        | Q(regularization_checkout_id=checkout_id),
+        provider=Subscription.Provider.ASAAS,
+    ).order_by("id")
+    if lock:
+        subscriptions = subscriptions.select_for_update()
+    matches = list(subscriptions[:2])
+    if len(matches) > 1:
+        raise ValueError("Checkout Asaas possui correlação local ambígua")
+    return matches[0] if matches else None
+
+
 def _is_stale_provider_event(subscription, event_at):
     return (
         event_at is not None
@@ -131,33 +167,43 @@ def _save_transition(subscription, update_fields, event_at):
 
 
 def activate_checkout_from_webhook(event):
-    external_reference = _required_provider_value(
-        event, "checkout", "externalReference"
-    )
     checkout_id = _required_provider_value(event, "checkout", "id")
-    provider_subscription_id = _required_provider_value(event, "subscription", "id")
-    subscription = (
-        Subscription.objects.select_for_update()
-        .filter(
-            external_reference=external_reference,
-            provider=Subscription.Provider.ASAAS,
-        )
-        .first()
-    )
-    if subscription is None:
-        subscription = (
-            Subscription.objects.select_for_update()
-            .filter(
-                regularization_checkout_reference=external_reference,
-                provider=Subscription.Provider.ASAAS,
-            )
-            .first()
-        )
+    checkout_status = _required_provider_value(event, "checkout", "status")
+    if checkout_status != "PAID":
+        raise ValueError("CHECKOUT_PAID sem status PAID")
+    subscription = checkout_subscription_from_webhook(event, lock=True)
     if subscription is None:
         return
     event_at = _provider_event_at(event)
     if _is_stale_provider_event(subscription, event_at):
         return
+
+    external_reference = _expected_checkout_reference(subscription, checkout_id)
+    if external_reference is None:
+        return
+    event_external_reference = event.payload.get("checkout", {}).get(
+        "externalReference"
+    )
+    if (
+        event_external_reference is not None
+        and event_external_reference != external_reference
+    ):
+        raise ValueError("Referência do evento não corresponde ao checkout local")
+
+    reconciliation = reconcile_paid_checkout(checkout_id, external_reference)
+    if (
+        reconciliation.checkout_id != checkout_id
+        or reconciliation.external_reference != external_reference
+    ):
+        raise ValueError("Reconciliação Asaas não corresponde ao checkout local")
+    provider_subscription_id = reconciliation.provider_subscription_id
+    event_provider_subscription_id = event.payload.get("subscription", {}).get("id")
+    if (
+        event_provider_subscription_id is not None
+        and event_provider_subscription_id != provider_subscription_id
+    ):
+        raise ValueError("Assinatura do evento diverge da reconciliação Asaas")
+
     if subscription.status == Subscription.Status.PENDING_CHECKOUT:
         subscription.provider_checkout_id = checkout_id
         subscription.provider_subscription_id = provider_subscription_id
@@ -228,6 +274,87 @@ def activate_checkout_from_webhook(event):
         is_active=False,
     ).update(is_active=True)
     _audit_transition(event, subscription, "BILLING_SUBSCRIPTION_REACTIVATED")
+
+
+def _expected_checkout_reference(subscription, checkout_id):
+    if (
+        subscription.status == Subscription.Status.PENDING_CHECKOUT
+        and subscription.provider_checkout_id == checkout_id
+    ):
+        return str(subscription.external_reference)
+    if (
+        subscription.status
+        in {Subscription.Status.SUSPENDED, Subscription.Status.CANCELED}
+        and subscription.regularization_checkout_state
+        == Subscription.RegularizationCheckoutState.CREATED
+        and subscription.regularization_checkout_id == checkout_id
+        and subscription.regularization_checkout_reference is not None
+    ):
+        return str(subscription.regularization_checkout_reference)
+    return None
+
+
+def end_checkout_from_webhook(event):
+    checkout_id = _required_provider_value(event, "checkout", "id")
+    checkout_status = _required_provider_value(event, "checkout", "status")
+    expected_status = {
+        "CHECKOUT_CANCELED": "CANCELED",
+        "CHECKOUT_EXPIRED": "EXPIRED",
+    }.get(event.event_type)
+    if checkout_status != expected_status:
+        raise ValueError("Status terminal não corresponde ao evento de checkout")
+
+    subscription = checkout_subscription_from_webhook(event, lock=True)
+    if subscription is None:
+        return
+    event_at = _provider_event_at(event)
+    if _is_stale_provider_event(subscription, event_at):
+        return
+
+    is_initial_checkout = (
+        subscription.status == Subscription.Status.PENDING_CHECKOUT
+        and subscription.provider_checkout_id == checkout_id
+    )
+    is_regularization_checkout = (
+        subscription.status
+        in {
+            Subscription.Status.PENDING_CHECKOUT,
+            Subscription.Status.SUSPENDED,
+            Subscription.Status.CANCELED,
+        }
+        and subscription.regularization_checkout_state
+        == Subscription.RegularizationCheckoutState.CREATED
+        and subscription.regularization_checkout_id == checkout_id
+    )
+    if not is_initial_checkout and not is_regularization_checkout:
+        return
+
+    update_fields = []
+    if subscription.provider_checkout_id == checkout_id:
+        subscription.provider_checkout_id = ""
+        update_fields.append("provider_checkout_id")
+    if is_regularization_checkout:
+        subscription.regularization_checkout_state = (
+            Subscription.RegularizationCheckoutState.READY
+        )
+        subscription.regularization_checkout_claim = None
+        subscription.regularization_checkout_claim_started_at = None
+        subscription.regularization_checkout_id = ""
+        subscription.regularization_checkout_url = ""
+        subscription.regularization_checkout_error = ""
+        subscription.regularization_checkout_reference = None
+        update_fields.extend(
+            [
+                "regularization_checkout_state",
+                "regularization_checkout_claim",
+                "regularization_checkout_claim_started_at",
+                "regularization_checkout_id",
+                "regularization_checkout_url",
+                "regularization_checkout_error",
+                "regularization_checkout_reference",
+            ]
+        )
+    _save_transition(subscription, update_fields, event_at)
 
 
 def _locked_payment_subscription(event):

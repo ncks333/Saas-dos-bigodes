@@ -1,5 +1,6 @@
 import os
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # ruff: noqa: F405
 
@@ -44,6 +45,10 @@ if not ASAAS_CHECKOUT_ALLOWED_ORIGINS or any(  # noqa: F405
     raise RuntimeError("ASAAS_CHECKOUT_ALLOWED_ORIGINS deve conter origens oficiais de produção")
 if not 10 <= ASAAS_CHECKOUT_EXPIRES_MINUTES <= 1440:  # noqa: F405
     raise RuntimeError("ASAAS_CHECKOUT_EXPIRES_MINUTES deve ficar entre 10 e 1440")
+try:
+    ZoneInfo(ASAAS_PROVIDER_TIMEZONE)  # noqa: F405
+except ZoneInfoNotFoundError:
+    raise RuntimeError("ASAAS_PROVIDER_TIMEZONE deve ser um fuso IANA válido") from None
 if not all((
     WHATSAPP_GRAPH_API_VERSION, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_ACCESS_TOKEN,
     WHATSAPP_TEMPLATE_LANGUAGE, WHATSAPP_CONFIRMATION_TEMPLATE, WHATSAPP_REMINDER_TEMPLATE,

@@ -18,6 +18,8 @@ from .services import (
     activate_checkout_from_webhook,
     activate_payment_from_webhook,
     cancel_subscription_from_webhook,
+    checkout_subscription_from_webhook,
+    end_checkout_from_webhook,
     make_regularization_token,
     start_payment_grace_from_webhook,
     suspend_chargeback_from_webhook,
@@ -34,6 +36,7 @@ IMMEDIATE_SUSPENSION_EVENTS = {
     "PAYMENT_CHARGEBACK_DISPUTE",
 }
 CANCEL_EVENTS = {"SUBSCRIPTION_INACTIVATED", "SUBSCRIPTION_DELETED"}
+CHECKOUT_TERMINAL_EVENTS = {"CHECKOUT_CANCELED", "CHECKOUT_EXPIRED"}
 WEBHOOK_RECOVERY_BATCH_SIZE = 100
 WEBHOOK_DISPATCH_LEASE = timedelta(minutes=5)
 WEBHOOK_RETRY_BASE_SECONDS = 60
@@ -113,16 +116,8 @@ def send_regularization_request_email(normalized_email):
 
 
 def _event_subscription(event):
-    if event.event_type == "CHECKOUT_PAID":
-        external_reference = event.payload.get("checkout", {}).get("externalReference")
-        if not external_reference:
-            return None
-        return Subscription.objects.filter(
-            provider=Subscription.Provider.ASAAS,
-        ).filter(
-            Q(external_reference=external_reference)
-            | Q(regularization_checkout_reference=external_reference)
-        ).first()
+    if event.event_type == "CHECKOUT_PAID" or event.event_type in CHECKOUT_TERMINAL_EVENTS:
+        return checkout_subscription_from_webhook(event)
     if (
         event.event_type
         in PAYMENT_SUCCESS_EVENTS | PAYMENT_FAILURE_EVENTS | IMMEDIATE_SUSPENSION_EVENTS
@@ -207,6 +202,8 @@ def _apply_transition(event):
                 and subscription.status == Subscription.Status.CANCELED
             ):
                 return "CANCELED"
+    elif event.event_type in CHECKOUT_TERMINAL_EVENTS:
+        end_checkout_from_webhook(event)
     return None
 
 

@@ -29,6 +29,7 @@ def production_environment(**overrides):
         "ASAAS_CHECKOUT_ALLOWED_ORIGINS": "https://asaas.com,https://www.asaas.com",
         "ASAAS_WEBHOOK_TOKEN": "w" * 64,
         "ASAAS_CHECKOUT_EXPIRES_MINUTES": "60",
+        "ASAAS_PROVIDER_TIMEZONE": "America/Sao_Paulo",
     }
     environment.update(overrides)
     return environment
@@ -98,3 +99,10 @@ def test_production_settings_require_documented_checkout_expiry_range():
         result = import_production_settings(ASAAS_CHECKOUT_EXPIRES_MINUTES=minutes)
         assert result.returncode != 0
         assert "ASAAS_CHECKOUT_EXPIRES_MINUTES" in result.stderr
+
+
+def test_production_settings_require_valid_provider_timezone():
+    result = import_production_settings(ASAAS_PROVIDER_TIMEZONE="Mars/Olympus")
+
+    assert result.returncode != 0
+    assert "ASAAS_PROVIDER_TIMEZONE" in result.stderr

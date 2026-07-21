@@ -310,3 +310,168 @@ def test_cancel_checkout_uses_asaas_cancel_endpoint(monkeypatch):
         },
         "timeout": 10,
     }
+
+
+@override_settings(**ASAAS_SETTINGS)
+def test_paid_checkout_reconciliation_retrieves_id_then_exact_subscription(
+    monkeypatch,
+):
+    external_reference = str(uuid4())
+    calls = []
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    def fake_get(url, *, headers, timeout, params=None):
+        calls.append(
+            {"url": url, "headers": headers, "timeout": timeout, "params": params}
+        )
+        if url.endswith("/checkouts/chk_paid"):
+            return Response(
+                {
+                    "id": "chk_paid",
+                    "status": "PAID",
+                    "externalReference": external_reference,
+                }
+            )
+        return Response(
+            {
+                "object": "list",
+                "hasMore": False,
+                "totalCount": 1,
+                "limit": 2,
+                "offset": 0,
+                "data": [
+                    {
+                        "id": "sub_verified",
+                        "status": "ACTIVE",
+                        "externalReference": external_reference,
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr("apps.billing.providers.asaas.requests.get", fake_get)
+
+    result = asaas.reconcile_paid_checkout("chk_paid", external_reference)
+
+    assert result.checkout_id == "chk_paid"
+    assert result.external_reference == external_reference
+    assert result.provider_subscription_id == "sub_verified"
+    assert calls == [
+        {
+            "url": "https://api-sandbox.asaas.com/v3/checkouts/chk_paid",
+            "headers": {
+                "accept": "application/json",
+                "access_token": "asaas-test-token",
+            },
+            "timeout": 10,
+            "params": None,
+        },
+        {
+            "url": "https://api-sandbox.asaas.com/v3/subscriptions",
+            "headers": {
+                "accept": "application/json",
+                "access_token": "asaas-test-token",
+            },
+            "timeout": 10,
+            "params": {"externalReference": external_reference, "limit": 2},
+        },
+    ]
+
+
+@override_settings(**ASAAS_SETTINGS)
+@pytest.mark.parametrize(
+    "checkout_payload",
+    [
+        {"id": "chk_other", "status": "PAID", "externalReference": "expected"},
+        {"id": "chk_paid", "status": "ACTIVE", "externalReference": "expected"},
+        {"id": "chk_paid", "status": "PAID", "externalReference": "other"},
+        {"id": "chk_paid", "status": "PAID"},
+    ],
+)
+def test_paid_checkout_reconciliation_fails_closed_on_checkout_mismatch(
+    monkeypatch, checkout_payload
+):
+    response = type(
+        "Response",
+        (),
+        {
+            "raise_for_status": lambda self: None,
+            "json": lambda self: checkout_payload,
+        },
+    )()
+    monkeypatch.setattr(
+        "apps.billing.providers.asaas.requests.get",
+        lambda *_args, **_kwargs: response,
+    )
+
+    with pytest.raises(AsaasCheckoutError):
+        asaas.reconcile_paid_checkout("chk_paid", "expected")
+
+
+@override_settings(**ASAAS_SETTINGS)
+@pytest.mark.parametrize(
+    "subscription_payload",
+    [
+        {"data": []},
+        {
+            "data": [
+                {"id": "sub_1", "status": "ACTIVE", "externalReference": "expected"},
+                {"id": "sub_2", "status": "ACTIVE", "externalReference": "expected"},
+            ]
+        },
+        {"data": [{"id": "sub_1", "status": "INACTIVE", "externalReference": "expected"}]},
+        {"data": [{"id": "sub_1", "status": "ACTIVE", "externalReference": "other"}]},
+    ],
+)
+def test_paid_checkout_reconciliation_fails_closed_on_ambiguous_subscription(
+    monkeypatch, subscription_payload
+):
+    responses = iter(
+        [
+            {
+                "id": "chk_paid",
+                "status": "PAID",
+                "externalReference": "expected",
+            },
+            subscription_payload,
+        ]
+    )
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return next(responses)
+
+    monkeypatch.setattr(
+        "apps.billing.providers.asaas.requests.get",
+        lambda *_args, **_kwargs: Response(),
+    )
+
+    with pytest.raises(AsaasCheckoutError):
+        asaas.reconcile_paid_checkout("chk_paid", "expected")
+
+
+@override_settings(**ASAAS_SETTINGS)
+def test_paid_checkout_reconciliation_hides_api_key_on_transport_failure(monkeypatch):
+    monkeypatch.setattr(
+        "apps.billing.providers.asaas.requests.get",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            requests.Timeout("asaas-test-token")
+        ),
+    )
+
+    with pytest.raises(AsaasCheckoutError) as exc_info:
+        asaas.reconcile_paid_checkout("chk_paid", "expected")
+
+    assert "asaas-test-token" not in str(exc_info.value)

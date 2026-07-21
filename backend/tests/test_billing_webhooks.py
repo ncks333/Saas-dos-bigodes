@@ -1,6 +1,8 @@
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from django.core import mail
@@ -20,6 +22,27 @@ WEBHOOK_TOKEN = "valid-token"
 @pytest.fixture(autouse=True)
 def asaas_webhook_token(settings):
     settings.ASAAS_WEBHOOK_TOKEN = WEBHOOK_TOKEN
+
+
+@pytest.fixture(autouse=True)
+def verified_paid_checkout(monkeypatch):
+    def reconcile(checkout_id, external_reference):
+        provider_subscription_id = (
+            "sub_asaas_checkout"
+            if checkout_id == "chk_pending"
+            else (
+                "sub_regularized"
+                if checkout_id == "chk_regularization"
+                else checkout_id.replace("chk_", "sub_", 1)
+            )
+        )
+        return SimpleNamespace(
+            checkout_id=checkout_id,
+            external_reference=external_reference,
+            provider_subscription_id=provider_subscription_id,
+        )
+
+    monkeypatch.setattr("apps.billing.services.reconcile_paid_checkout", reconcile)
 
 
 def post_webhook(client, payload, *, token=WEBHOOK_TOKEN):
@@ -116,6 +139,300 @@ def test_valid_webhook_returns_exact_200_after_durable_acceptance(client):
     ).exists()
 
 
+@pytest.mark.django_db(transaction=True)
+def test_documented_checkout_paid_fixture_reconciles_from_persisted_checkout_id(
+    client, pending_subscription, monkeypatch
+):
+    fixture_path = Path(__file__).parent / "fixtures" / "asaas_checkout_paid.json"
+    payload = json.loads(fixture_path.read_text())
+    checkout_id = payload["checkout"]["id"]
+    pending_subscription.provider_checkout_id = checkout_id
+    pending_subscription.save(update_fields=["provider_checkout_id", "updated_at"])
+    calls = []
+
+    def reconcile_paid_checkout(received_checkout_id, expected_reference):
+        calls.append((received_checkout_id, expected_reference))
+        return SimpleNamespace(
+            checkout_id=checkout_id,
+            external_reference=str(pending_subscription.external_reference),
+            provider_subscription_id="sub_from_provider_reconciliation",
+        )
+
+    monkeypatch.setattr(
+        "apps.billing.services.reconcile_paid_checkout",
+        reconcile_paid_checkout,
+        raising=False,
+    )
+
+    response = post_webhook(client, payload)
+
+    event = BillingWebhookEvent.objects.get(provider_event_id=payload["id"])
+    pending_subscription.refresh_from_db()
+    assert response.status_code == 200
+    assert event.payload == {
+        "dateCreated": "2024-10-31T21:07:47+00:00",
+        "checkout": {"id": checkout_id, "status": "PAID"},
+    }
+    assert calls == [(checkout_id, str(pending_subscription.external_reference))]
+    assert pending_subscription.status == Subscription.Status.TRIAL
+    assert (
+        pending_subscription.provider_subscription_id
+        == "sub_from_provider_reconciliation"
+    )
+
+
+@pytest.mark.django_db
+def test_checkout_paid_event_only_reference_mismatch_fails_closed(
+    client, pending_subscription, monkeypatch
+):
+    provider_called = False
+
+    def reconcile_paid_checkout(*_args):
+        nonlocal provider_called
+        provider_called = True
+        return SimpleNamespace(
+            checkout_id=pending_subscription.provider_checkout_id,
+            external_reference=str(pending_subscription.external_reference),
+            provider_subscription_id="sub_verified",
+        )
+
+    monkeypatch.setattr(
+        "apps.billing.services.reconcile_paid_checkout",
+        reconcile_paid_checkout,
+        raising=False,
+    )
+
+    response = post_webhook(
+        client,
+        {
+            "id": "evt_unverified_reference_mismatch",
+            "event": "CHECKOUT_PAID",
+            "checkout": {
+                "id": pending_subscription.provider_checkout_id,
+                "status": "PAID",
+                "externalReference": str(uuid.uuid4()),
+            },
+        },
+    )
+
+    event = BillingWebhookEvent.objects.get(
+        provider_event_id="evt_unverified_reference_mismatch"
+    )
+    pending_subscription.refresh_from_db()
+    assert response.status_code == 200
+    assert provider_called is False
+    assert event.processed_at is None
+    assert event.processing_error == "ValueError"
+    assert pending_subscription.status == Subscription.Status.PENDING_CHECKOUT
+
+
+@pytest.mark.django_db
+def test_checkout_paid_without_persisted_checkout_id_is_ignored_fail_closed(
+    client, subscription, monkeypatch
+):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.regularization_checkout_state = "RECONCILIATION_REQUIRED"
+    subscription.regularization_checkout_reference = uuid.uuid4()
+    subscription.save(
+        update_fields=[
+            "status",
+            "regularization_checkout_state",
+            "regularization_checkout_reference",
+            "updated_at",
+        ]
+    )
+    monkeypatch.setattr(
+        "apps.billing.services.reconcile_paid_checkout",
+        lambda *_args: pytest.fail("provider must not be queried without a local ID"),
+        raising=False,
+    )
+
+    response = post_webhook(
+        client,
+        {
+            "id": "evt_no_persisted_checkout",
+            "event": "CHECKOUT_PAID",
+            "checkout": {"id": "chk_unknown", "status": "PAID"},
+        },
+    )
+
+    event = BillingWebhookEvent.objects.get(
+        provider_event_id="evt_no_persisted_checkout"
+    )
+    subscription.refresh_from_db()
+    assert response.status_code == 200
+    assert event.processed_at is not None
+    assert subscription.status == Subscription.Status.SUSPENDED
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    ("event_type", "checkout_status"),
+    [
+        ("CHECKOUT_CANCELED", "CANCELED"),
+        ("CHECKOUT_EXPIRED", "EXPIRED"),
+    ],
+)
+def test_initial_checkout_terminal_event_clears_only_current_id_and_allows_email(
+    client, pending_subscription, event_type, checkout_status
+):
+    owner = pending_subscription.barbershop.users.get(role=User.Role.ADMIN)
+    checkout_id = pending_subscription.provider_checkout_id
+
+    response = post_webhook(
+        client,
+        {
+            "id": f"evt_initial_{checkout_status.lower()}",
+            "event": event_type,
+            "dateCreated": "2026-07-20 12:30:00",
+            "checkout": {"id": checkout_id, "status": checkout_status},
+        },
+    )
+
+    pending_subscription.refresh_from_db()
+    assert response.status_code == 200
+    assert pending_subscription.status == Subscription.Status.PENDING_CHECKOUT
+    assert pending_subscription.provider_checkout_id == ""
+
+    request_response = client.post(
+        "/api/v1/billing/regularization/request/",
+        {"email": owner.email},
+        content_type="application/json",
+    )
+    assert request_response.status_code == 200
+    assert len(mail.outbox) == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("event_type", "checkout_status"),
+    [
+        ("CHECKOUT_CANCELED", "CANCELED"),
+        ("CHECKOUT_EXPIRED", "EXPIRED"),
+    ],
+)
+def test_regularization_terminal_event_resets_only_current_checkout_for_reissue(
+    client, subscription, event_type, checkout_status
+):
+    current_reference = uuid.uuid4()
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.provider_checkout_id = "chk_regularization_current"
+    subscription.regularization_checkout_state = "CREATED"
+    subscription.regularization_checkout_id = "chk_regularization_current"
+    subscription.regularization_checkout_url = (
+        "https://sandbox.asaas.com/checkout/chk_regularization_current"
+    )
+    subscription.regularization_checkout_reference = current_reference
+    subscription.regularization_checkout_error = "old"
+    subscription.save(
+        update_fields=[
+            "status",
+            "provider_checkout_id",
+            "regularization_checkout_state",
+            "regularization_checkout_id",
+            "regularization_checkout_url",
+            "regularization_checkout_reference",
+            "regularization_checkout_error",
+            "updated_at",
+        ]
+    )
+
+    response = post_webhook(
+        client,
+        {
+            "id": f"evt_regularization_{checkout_status.lower()}",
+            "event": event_type,
+            "checkout": {
+                "id": "chk_regularization_current",
+                "status": checkout_status,
+            },
+        },
+    )
+
+    subscription.refresh_from_db()
+    assert response.status_code == 200
+    assert subscription.status == Subscription.Status.SUSPENDED
+    assert subscription.provider_checkout_id == ""
+    assert subscription.regularization_checkout_state == "READY"
+    assert subscription.regularization_checkout_id == ""
+    assert subscription.regularization_checkout_url == ""
+    assert subscription.regularization_checkout_reference is None
+    assert subscription.regularization_checkout_error == ""
+
+
+@pytest.mark.django_db
+def test_stale_terminal_event_cannot_clear_newer_regularization_checkout(
+    client, subscription
+):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.provider_checkout_id = "chk_current"
+    subscription.regularization_checkout_state = "CREATED"
+    subscription.regularization_checkout_id = "chk_current"
+    subscription.regularization_checkout_url = "https://sandbox.asaas.com/current"
+    subscription.regularization_checkout_reference = uuid.uuid4()
+    subscription.last_provider_event_at = datetime(2026, 7, 20, 16, tzinfo=UTC)
+    subscription.save(
+        update_fields=[
+            "status",
+            "provider_checkout_id",
+            "regularization_checkout_state",
+            "regularization_checkout_id",
+            "regularization_checkout_url",
+            "regularization_checkout_reference",
+            "last_provider_event_at",
+            "updated_at",
+        ]
+    )
+
+    response = post_webhook(
+        client,
+        {
+            "id": "evt_stale_checkout_expired",
+            "event": "CHECKOUT_EXPIRED",
+            "dateCreated": "2026-07-20 12:00:00",
+            "checkout": {"id": "chk_current", "status": "EXPIRED"},
+        },
+    )
+
+    subscription.refresh_from_db()
+    assert response.status_code == 200
+    assert subscription.provider_checkout_id == "chk_current"
+    assert subscription.regularization_checkout_state == "CREATED"
+
+
+@pytest.mark.django_db
+def test_documented_local_timestamps_order_events_across_payment_cycles(
+    client, subscription
+):
+    attach_provider_subscription(subscription)
+    newer_success = payment_webhook_payload(
+        "evt_local_new_cycle_success",
+        "PAYMENT_RECEIVED",
+        subscription,
+        "pay_new_cycle_local",
+        "RECEIVED",
+    )
+    newer_success["dateCreated"] = "2026-07-20 12:00:00"
+    older_overdue = payment_webhook_payload(
+        "evt_local_old_cycle_overdue",
+        "PAYMENT_OVERDUE",
+        subscription,
+        "pay_old_cycle_local",
+        "OVERDUE",
+    )
+    older_overdue["dateCreated"] = "2026-07-20 11:00:00"
+
+    assert post_webhook(client, newer_success).status_code == 200
+    assert post_webhook(client, older_overdue).status_code == 200
+
+    subscription.refresh_from_db()
+    assert subscription.status == Subscription.Status.ACTIVE
+    assert subscription.last_payment_id == "pay_new_cycle_local"
+    assert subscription.last_provider_event_at == datetime(
+        2026, 7, 20, 15, tzinfo=UTC
+    )
+
+
 @pytest.mark.django_db
 def test_webhook_storage_failure_can_fail_delivery(client, monkeypatch):
     client.raise_request_exception = False
@@ -155,6 +472,7 @@ def test_checkout_paid_activates_tenant_users_exactly_once_without_enabling_shop
         "checkout": {
             "id": pending_subscription.provider_checkout_id,
             "externalReference": str(pending_subscription.external_reference),
+            "status": "PAID",
         },
         "subscription": {"id": "sub_asaas_checkout"},
     }
@@ -220,6 +538,7 @@ def test_regularization_checkout_paid_reactivates_blocked_subscription_once(
         "checkout": {
             "id": "chk_regularization",
             "externalReference": str(attempt_reference),
+            "status": "PAID",
         },
         "subscription": {"id": "sub_regularized"},
     }
@@ -255,7 +574,7 @@ def test_regularization_checkout_paid_reactivates_blocked_subscription_once(
 
 
 @pytest.mark.django_db(transaction=True)
-def test_checkout_paid_recovers_matching_uncertain_regularization_checkout(
+def test_checkout_paid_cannot_recover_uncertain_checkout_without_persisted_id(
     client, subscription, user
 ):
     subscription.status = Subscription.Status.SUSPENDED
@@ -283,6 +602,7 @@ def test_checkout_paid_recovers_matching_uncertain_regularization_checkout(
             "checkout": {
                 "id": "chk_recovered",
                 "externalReference": str(attempt_reference),
+                "status": "PAID",
             },
             "subscription": {"id": "sub_recovered"},
         },
@@ -291,11 +611,11 @@ def test_checkout_paid_recovers_matching_uncertain_regularization_checkout(
     subscription.refresh_from_db()
     user.refresh_from_db()
     assert response.status_code == 200
-    assert subscription.status == Subscription.Status.ACTIVE
-    assert subscription.regularization_checkout_state == "PAID"
-    assert subscription.regularization_checkout_id == "chk_recovered"
-    assert subscription.provider_subscription_id == "sub_recovered"
-    assert user.is_active is True
+    assert subscription.status == Subscription.Status.SUSPENDED
+    assert subscription.regularization_checkout_state == "RECONCILIATION_REQUIRED"
+    assert subscription.regularization_checkout_id == ""
+    assert subscription.provider_subscription_id == ""
+    assert user.is_active is False
 
 
 @pytest.mark.django_db(transaction=True)
@@ -329,6 +649,7 @@ def test_unrelated_checkout_cannot_reactivate_persisted_regularization_checkout(
             "checkout": {
                 "id": "chk_unrelated",
                 "externalReference": str(subscription.external_reference),
+                "status": "PAID",
             },
             "subscription": {"id": "sub_unrelated"},
         },
@@ -379,6 +700,7 @@ def test_legacy_created_checkout_requires_its_static_reference_and_exact_id(
             "checkout": {
                 "id": checkout_id,
                 "externalReference": str(subscription.external_reference),
+                "status": "PAID",
             },
             "subscription": {"id": "sub_legacy"},
         },
@@ -427,6 +749,7 @@ def test_legacy_attach_with_attempt_reference_allows_exact_webhook_recovery(
             "checkout": {
                 "id": "chk_legacy_attached",
                 "externalReference": str(attempt_reference),
+                "status": "PAID",
             },
             "subscription": {"id": "sub_legacy_attached"},
         },
@@ -470,6 +793,7 @@ def test_old_attempt_checkout_cannot_reactivate_new_uncertain_attempt(
             "checkout": {
                 "id": "chk_old",
                 "externalReference": str(old_attempt_reference),
+                "status": "PAID",
             },
             "subscription": {"id": "sub_old"},
         },
@@ -530,6 +854,7 @@ def test_distinct_regularization_reactivations_send_one_email_per_provider_event
                 "checkout": {
                     "id": checkout_id,
                     "externalReference": str(attempt_reference),
+                    "status": "PAID",
                 },
                 "subscription": {"id": provider_subscription_id},
             },
@@ -883,6 +1208,7 @@ def test_processor_rolls_back_failure_and_can_retry(plan, monkeypatch):
             "checkout": {
                 "id": "chk_retry",
                 "externalReference": str(external_reference),
+                "status": "PAID",
             },
             "subscription": {"id": "sub_retry"},
         },
@@ -900,6 +1226,7 @@ def test_processor_rolls_back_failure_and_can_retry(plan, monkeypatch):
         plan=plan,
         status=Subscription.Status.PENDING_CHECKOUT,
         external_reference=external_reference,
+        provider_checkout_id="chk_retry",
     )
     original_record = __import__(
         "apps.audit.services", fromlist=["record_system_event"]
@@ -967,8 +1294,9 @@ def test_publish_failure_returns_200_and_recovery_processes_persisted_row(
         "checkout": {
             "id": pending_subscription.provider_checkout_id,
             "externalReference": str(pending_subscription.external_reference),
+            "status": "PAID",
         },
-        "subscription": {"id": "sub_publish_recovery"},
+        "subscription": {"id": "sub_asaas_checkout"},
     }
     monkeypatch.setattr(
         "apps.billing.views.process_billing_webhook.delay",
@@ -1278,6 +1606,7 @@ def test_checkout_paid_only_activates_pending_checkout(client, subscription):
             "checkout": {
                 "id": "chk_late",
                 "externalReference": str(subscription.external_reference),
+                "status": "PAID",
             },
             "subscription": {"id": "sub_late"},
         },

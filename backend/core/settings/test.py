@@ -11,4 +11,5 @@ ASAAS_CHECKOUT_ALLOWED_ORIGINS = ["https://sandbox.asaas.com"]
 ASAAS_API_KEY = "asaas-test-token"
 ASAAS_WEBHOOK_TOKEN = "asaas-webhook-test-token"
 ASAAS_CHECKOUT_EXPIRES_MINUTES = 60
+ASAAS_PROVIDER_TIMEZONE = "America/Sao_Paulo"
 BILLING_PUBLIC_PLAN_CODE = "barberhub"
