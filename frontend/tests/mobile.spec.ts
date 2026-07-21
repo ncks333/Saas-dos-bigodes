@@ -336,7 +336,9 @@ test("cadastro envia somente campos declarados e usa checkout seguro do servidor
     barbershop_name: "Barbearia João",
     slug: "barbearia-joao",
     whatsapp: "11999999999",
-    captcha_token: "development",
+    captcha_token: process.env.VITE_TURNSTILE_SITE_KEY
+      ? "XXXX.DUMMY.TOKEN.XXXX"
+      : "development",
     terms_accepted: true,
   });
   await expect(page).toHaveURL(/\/checkout\/concluido$/);

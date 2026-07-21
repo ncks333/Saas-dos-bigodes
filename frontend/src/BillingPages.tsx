@@ -59,7 +59,7 @@ function safeCheckoutTarget(checkoutUrl: string) {
     const allowedOrigins = new Set(
       (import.meta.env.VITE_ASAAS_CHECKOUT_ORIGINS ?? "")
         .split(",")
-        .map(origin => origin.trim())
+        .map((origin: string) => origin.trim())
         .filter(Boolean),
     );
     const isAllowedProviderRoute = target.protocol === "https:"
