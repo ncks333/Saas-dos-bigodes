@@ -1,6 +1,6 @@
 import json
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from django.utils import timezone
@@ -60,6 +60,11 @@ def test_webhook_rejects_missing_or_invalid_token(client, token):
         {"id": "evt_empty_event", "event": ""},
         {"id": 123, "event": "CHECKOUT_PAID"},
         {"id": "evt_non_string_event", "event": ["CHECKOUT_PAID"]},
+        {"id": "   ", "event": "CHECKOUT_PAID"},
+        {"id": " evt_surrounded ", "event": "CHECKOUT_PAID"},
+        {"id": "evt_control\n", "event": "CHECKOUT_PAID"},
+        {"id": "evt_whitespace_event", "event": " CHECKOUT_PAID"},
+        {"id": "evt_control_event", "event": "CHECKOUT\tPAID"},
     ],
 )
 def test_webhook_rejects_missing_or_invalid_id_and_event(client, payload):
@@ -387,6 +392,7 @@ def test_webhook_persists_only_sanitized_projection(client):
     payload = {
         "id": "evt_sanitized",
         "event": "UNMAPPED_EVENT",
+        "dateCreated": "2026-07-20T12:30:00Z",
         "checkout": {
             "id": "chk_safe",
             "externalReference": str(uuid.uuid4()),
@@ -409,6 +415,7 @@ def test_webhook_persists_only_sanitized_projection(client):
     event = BillingWebhookEvent.objects.get(provider_event_id="evt_sanitized")
     assert response.status_code == 202
     assert event.payload == {
+        "dateCreated": "2026-07-20T12:30:00+00:00",
         "checkout": {
             "id": "chk_safe",
             "externalReference": payload["checkout"]["externalReference"],
@@ -514,3 +521,408 @@ def test_processor_rolls_back_failure_and_can_retry(plan, monkeypatch):
     assert subscription.provider_subscription_id == "sub_retry"
     assert user.is_active is True
     assert AuditEvent.objects.filter(action="BILLING_TRIAL_ACTIVATED").count() == 1
+
+
+@pytest.mark.django_db
+def test_non_ascii_webhook_token_is_rejected_without_error(client):
+    response = post_webhook(
+        client,
+        {"id": "evt_non_ascii_token", "event": "UNMAPPED_EVENT"},
+        token="inválido",
+    )
+
+    assert response.status_code == 401
+    assert BillingWebhookEvent.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_publish_failure_returns_503_and_redelivery_processes_same_row(
+    client, pending_subscription, monkeypatch
+):
+    from apps.billing.tasks import process_billing_webhook
+
+    payload = {
+        "id": "evt_publish_recovery",
+        "event": "CHECKOUT_PAID",
+        "dateCreated": "2026-07-20T10:00:00Z",
+        "checkout": {
+            "id": pending_subscription.provider_checkout_id,
+            "externalReference": str(pending_subscription.external_reference),
+        },
+        "subscription": {"id": "sub_publish_recovery"},
+    }
+    monkeypatch.setattr(
+        "apps.billing.views.process_billing_webhook.delay",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("broker secret")),
+    )
+
+    first = post_webhook(client, payload)
+
+    event = BillingWebhookEvent.objects.get(provider_event_id=payload["id"])
+    assert first.status_code == 503
+    assert event.processed_at is None
+    assert event.processing_error == ""
+    assert BillingWebhookEvent.objects.count() == 1
+
+    monkeypatch.setattr(
+        "apps.billing.views.process_billing_webhook.delay",
+        lambda event_id: process_billing_webhook.run(event_id),
+    )
+    second = post_webhook(client, payload)
+
+    event.refresh_from_db()
+    pending_subscription.refresh_from_db()
+    assert second.status_code == 202
+    assert event.processed_at is not None
+    assert BillingWebhookEvent.objects.count() == 1
+    assert pending_subscription.status == Subscription.Status.TRIAL
+    assert AuditEvent.objects.filter(action="BILLING_TRIAL_ACTIVATED").count() == 1
+
+
+@pytest.mark.django_db
+def test_processed_duplicate_does_not_republish(client, monkeypatch):
+    payload = {"id": "evt_processed_duplicate", "event": "UNMAPPED_EVENT"}
+    assert post_webhook(client, payload).status_code == 202
+
+    monkeypatch.setattr(
+        "apps.billing.views.process_billing_webhook.delay",
+        lambda *_args: pytest.fail("processed duplicate must not republish"),
+    )
+
+    assert post_webhook(client, payload).status_code == 202
+
+
+@pytest.mark.django_db
+def test_recovery_task_redispatches_only_bounded_unprocessed_events(monkeypatch):
+    from apps.billing.tasks import redispatch_unprocessed_billing_webhooks
+
+    events = [
+        BillingWebhookEvent.objects.create(
+            provider="ASAAS",
+            provider_event_id=f"evt_recovery_{index:03d}",
+            event_type="UNMAPPED_EVENT",
+            payload={},
+        )
+        for index in range(102)
+    ]
+    processed = events[0]
+    processed.processed_at = timezone.now()
+    processed.save(update_fields=["processed_at", "updated_at"])
+    dispatched = []
+    monkeypatch.setattr(
+        "apps.billing.tasks.process_billing_webhook.delay", dispatched.append
+    )
+
+    count = redispatch_unprocessed_billing_webhooks.run()
+
+    assert count == 100
+    assert len(dispatched) == 100
+    assert processed.id not in dispatched
+    assert events[-1].id not in dispatched
+
+
+def test_recovery_task_has_short_beat_schedule(settings):
+    schedule = settings.CELERY_BEAT_SCHEDULE["billing-webhook-recovery-every-minute"]
+
+    assert schedule == {
+        "task": "apps.billing.tasks.redispatch_unprocessed_billing_webhooks",
+        "schedule": 60.0,
+    }
+
+
+def payment_webhook_payload(
+    event_id,
+    event_type,
+    subscription,
+    payment_id,
+    status,
+    *,
+    created_at=None,
+):
+    payload = {
+        "id": event_id,
+        "event": event_type,
+        "payment": {
+            "id": payment_id,
+            "subscription": subscription.provider_subscription_id,
+            "status": status,
+        },
+    }
+    if created_at is not None:
+        payload["dateCreated"] = created_at.isoformat().replace("+00:00", "Z")
+    return payload
+
+
+@pytest.mark.django_db
+def test_canceled_subscription_ignores_delayed_overdue(client, subscription):
+    attach_provider_subscription(subscription)
+    newer = datetime(2026, 7, 20, 12, tzinfo=UTC)
+    older = newer - timedelta(hours=1)
+    cancel = {
+        "id": "evt_cancel_terminal",
+        "event": "SUBSCRIPTION_DELETED",
+        "dateCreated": newer.isoformat().replace("+00:00", "Z"),
+        "subscription": {"id": subscription.provider_subscription_id},
+    }
+    overdue = payment_webhook_payload(
+        "evt_overdue_after_cancel",
+        "PAYMENT_OVERDUE",
+        subscription,
+        "pay_canceled",
+        "OVERDUE",
+        created_at=older,
+    )
+
+    assert post_webhook(client, cancel).status_code == 202
+    assert post_webhook(client, overdue).status_code == 202
+
+    subscription.refresh_from_db()
+    assert subscription.status == Subscription.Status.CANCELED
+    assert subscription.grace_ends_at is None
+
+
+@pytest.mark.django_db
+def test_chargeback_suspension_ignores_delayed_overdue(client, subscription):
+    attach_provider_subscription(subscription)
+    chargeback_at = datetime(2026, 7, 20, 12, tzinfo=UTC)
+
+    post_webhook(
+        client,
+        payment_webhook_payload(
+            "evt_chargeback_before_overdue",
+            "PAYMENT_CHARGEBACK_REQUESTED",
+            subscription,
+            "pay_chargeback_guard",
+            "CHARGEBACK_REQUESTED",
+            created_at=chargeback_at,
+        ),
+    )
+    post_webhook(
+        client,
+        payment_webhook_payload(
+            "evt_delayed_overdue_after_chargeback",
+            "PAYMENT_OVERDUE",
+            subscription,
+            "pay_chargeback_guard",
+            "OVERDUE",
+            created_at=chargeback_at - timedelta(minutes=1),
+        ),
+    )
+
+    subscription.refresh_from_db()
+    assert subscription.status == Subscription.Status.SUSPENDED
+    assert subscription.suspension_reason == "CHARGEBACK"
+    assert subscription.grace_ends_at is None
+
+
+@pytest.mark.django_db
+def test_chargeback_suspension_ignores_same_payment_success(client, subscription):
+    attach_provider_subscription(subscription)
+    chargeback_at = datetime(2026, 7, 20, 12, tzinfo=UTC)
+
+    post_webhook(
+        client,
+        payment_webhook_payload(
+            "evt_chargeback_same_payment",
+            "PAYMENT_CHARGEBACK_DISPUTE",
+            subscription,
+            "pay_same",
+            "CHARGEBACK_DISPUTE",
+            created_at=chargeback_at,
+        ),
+    )
+    post_webhook(
+        client,
+        payment_webhook_payload(
+            "evt_success_same_payment",
+            "PAYMENT_RECEIVED",
+            subscription,
+            "pay_same",
+            "RECEIVED",
+            created_at=chargeback_at + timedelta(hours=1),
+        ),
+    )
+
+    subscription.refresh_from_db()
+    assert subscription.status == Subscription.Status.SUSPENDED
+    assert subscription.last_payment_id == "pay_same"
+    assert subscription.suspension_reason == "CHARGEBACK"
+
+
+@pytest.mark.django_db
+def test_stale_provider_timestamp_is_ignored(client, subscription):
+    attach_provider_subscription(subscription)
+    newest = datetime(2026, 7, 20, 12, tzinfo=UTC)
+
+    post_webhook(
+        client,
+        payment_webhook_payload(
+            "evt_newest_success",
+            "PAYMENT_CONFIRMED",
+            subscription,
+            "pay_newest",
+            "CONFIRMED",
+            created_at=newest,
+        ),
+    )
+    post_webhook(
+        client,
+        payment_webhook_payload(
+            "evt_stale_overdue",
+            "PAYMENT_OVERDUE",
+            subscription,
+            "pay_stale",
+            "OVERDUE",
+            created_at=newest - timedelta(hours=1),
+        ),
+    )
+
+    subscription.refresh_from_db()
+    assert subscription.status == Subscription.Status.ACTIVE
+    assert subscription.last_payment_id == "pay_newest"
+    assert subscription.last_provider_event_at == newest
+
+
+@pytest.mark.django_db
+def test_newer_different_payment_reactivates_chargeback_suspension(
+    client, subscription
+):
+    attach_provider_subscription(subscription)
+    chargeback_at = datetime(2026, 7, 20, 12, tzinfo=UTC)
+    newer_success_at = chargeback_at + timedelta(days=1)
+
+    post_webhook(
+        client,
+        payment_webhook_payload(
+            "evt_chargeback_old_cycle",
+            "PAYMENT_CHARGEBACK_REQUESTED",
+            subscription,
+            "pay_old_cycle",
+            "CHARGEBACK_REQUESTED",
+            created_at=chargeback_at,
+        ),
+    )
+    post_webhook(
+        client,
+        payment_webhook_payload(
+            "evt_new_cycle_success",
+            "PAYMENT_RECEIVED",
+            subscription,
+            "pay_new_cycle",
+            "RECEIVED",
+            created_at=newer_success_at,
+        ),
+    )
+
+    subscription.refresh_from_db()
+    assert subscription.status == Subscription.Status.ACTIVE
+    assert subscription.last_payment_id == "pay_new_cycle"
+    assert subscription.last_provider_event_at == newer_success_at
+    assert subscription.suspension_reason == ""
+
+
+@pytest.mark.django_db
+def test_checkout_paid_only_activates_pending_checkout(client, subscription):
+    subscription.status = Subscription.Status.ACTIVE
+    subscription.save(update_fields=["status", "updated_at"])
+
+    response = post_webhook(
+        client,
+        {
+            "id": "evt_late_checkout",
+            "event": "CHECKOUT_PAID",
+            "dateCreated": "2026-07-20T12:00:00Z",
+            "checkout": {
+                "id": "chk_late",
+                "externalReference": str(subscription.external_reference),
+            },
+            "subscription": {"id": "sub_late"},
+        },
+    )
+
+    subscription.refresh_from_db()
+    assert response.status_code == 202
+    assert subscription.status == Subscription.Status.ACTIVE
+    assert subscription.provider_subscription_id == ""
+
+
+@pytest.mark.django_db
+def test_same_payment_cannot_start_second_grace_after_success(client, subscription):
+    attach_provider_subscription(subscription)
+    payment_id = "pay_cycle_one"
+    overdue = payment_webhook_payload(
+        "evt_cycle_one_overdue",
+        "PAYMENT_OVERDUE",
+        subscription,
+        payment_id,
+        "OVERDUE",
+    )
+    success = payment_webhook_payload(
+        "evt_cycle_one_success",
+        "PAYMENT_RECEIVED",
+        subscription,
+        payment_id,
+        "RECEIVED",
+    )
+    delayed = payment_webhook_payload(
+        "evt_cycle_one_delayed_overdue",
+        "PAYMENT_OVERDUE",
+        subscription,
+        payment_id,
+        "OVERDUE",
+    )
+
+    post_webhook(client, overdue)
+    post_webhook(client, success)
+    post_webhook(client, delayed)
+
+    subscription.refresh_from_db()
+    assert subscription.status == Subscription.Status.ACTIVE
+    assert subscription.grace_payment_id == payment_id
+    assert subscription.last_payment_id == payment_id
+
+
+@pytest.mark.django_db
+def test_new_payment_cycle_can_start_fresh_exact_grace(
+    client, subscription, monkeypatch
+):
+    attach_provider_subscription(subscription)
+    post_webhook(
+        client,
+        payment_webhook_payload(
+            "evt_old_cycle_overdue",
+            "PAYMENT_OVERDUE",
+            subscription,
+            "pay_old",
+            "OVERDUE",
+        ),
+    )
+    post_webhook(
+        client,
+        payment_webhook_payload(
+            "evt_old_cycle_success",
+            "PAYMENT_RECEIVED",
+            subscription,
+            "pay_old",
+            "RECEIVED",
+        ),
+    )
+    new_cycle_at = timezone.now() + timedelta(days=2)
+    monkeypatch.setattr("apps.billing.services.timezone.now", lambda: new_cycle_at)
+
+    post_webhook(
+        client,
+        payment_webhook_payload(
+            "evt_new_cycle_overdue",
+            "PAYMENT_OVERDUE",
+            subscription,
+            "pay_new",
+            "OVERDUE",
+        ),
+    )
+
+    subscription.refresh_from_db()
+    assert subscription.status == Subscription.Status.GRACE
+    assert subscription.grace_payment_id == "pay_new"
+    assert subscription.last_payment_id == "pay_new"
+    assert subscription.grace_ends_at == new_cycle_at + timedelta(days=7)

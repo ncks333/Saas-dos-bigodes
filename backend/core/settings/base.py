@@ -125,7 +125,11 @@ CELERY_BEAT_SCHEDULE = {
     "appointment-reminders-every-10-minutes": {
         "task": "apps.notifications.tasks.enqueue_due_reminders",
         "schedule": 600.0,
-    }
+    },
+    "billing-webhook-recovery-every-minute": {
+        "task": "apps.billing.tasks.redispatch_unprocessed_billing_webhooks",
+        "schedule": 60.0,
+    },
 }
 
 def env_list(name: str, default: str = "") -> list[str]:

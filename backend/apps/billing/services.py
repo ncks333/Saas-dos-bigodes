@@ -1,9 +1,10 @@
 import logging
 from collections.abc import Mapping
-from datetime import time, timedelta
+from datetime import UTC, time, timedelta
 
 from django.db import transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from apps.accounts.models import User
 from apps.audit import services as audit_services
@@ -39,6 +40,11 @@ def sanitize_asaas_webhook_payload(payload):
         return {}
 
     projection = {}
+    date_created = payload.get("dateCreated")
+    if isinstance(date_created, str) and len(date_created) <= 64:
+        parsed_date_created = parse_datetime(date_created)
+        if parsed_date_created is not None and timezone.is_aware(parsed_date_created):
+            projection["dateCreated"] = parsed_date_created.astimezone(UTC).isoformat()
     for object_name, safe_fields in SAFE_WEBHOOK_FIELDS.items():
         provider_object = payload.get(object_name)
         if not isinstance(provider_object, Mapping):
@@ -80,6 +86,32 @@ def _audit_transition(event, subscription, action, *, payment_id=None):
     )
 
 
+def _provider_event_at(event):
+    value = event.payload.get("dateCreated")
+    if not isinstance(value, str):
+        return None
+    parsed = parse_datetime(value)
+    if parsed is None or timezone.is_naive(parsed):
+        return None
+    return parsed
+
+
+def _is_stale_provider_event(subscription, event_at):
+    return (
+        event_at is not None
+        and subscription.last_provider_event_at is not None
+        and event_at < subscription.last_provider_event_at
+    )
+
+
+def _save_transition(subscription, update_fields, event_at):
+    if event_at is not None:
+        subscription.last_provider_event_at = event_at
+        update_fields.append("last_provider_event_at")
+    update_fields.append("updated_at")
+    subscription.save(update_fields=update_fields)
+
+
 def activate_checkout_from_webhook(event):
     external_reference = _required_provider_value(
         event, "checkout", "externalReference"
@@ -90,16 +122,23 @@ def activate_checkout_from_webhook(event):
         external_reference=external_reference,
         provider=Subscription.Provider.ASAAS,
     )
+    event_at = _provider_event_at(event)
+    if (
+        subscription.status != Subscription.Status.PENDING_CHECKOUT
+        or _is_stale_provider_event(subscription, event_at)
+    ):
+        return
     subscription.provider_checkout_id = checkout_id
     subscription.provider_subscription_id = provider_subscription_id
     subscription.status = Subscription.Status.TRIAL
-    subscription.save(
-        update_fields=[
+    _save_transition(
+        subscription,
+        [
             "provider_checkout_id",
             "provider_subscription_id",
             "status",
-            "updated_at",
-        ]
+        ],
+        event_at,
     )
     User.objects.filter(
         barbershop_id=subscription.barbershop_id,
@@ -123,6 +162,17 @@ def _locked_payment_subscription(event):
 
 def activate_payment_from_webhook(event):
     subscription, payment_id, payment_status = _locked_payment_subscription(event)
+    event_at = _provider_event_at(event)
+    if subscription.status == Subscription.Status.CANCELED or _is_stale_provider_event(
+        subscription, event_at
+    ):
+        return
+    if (
+        subscription.status == Subscription.Status.SUSPENDED
+        and subscription.suspension_reason == "CHARGEBACK"
+        and subscription.last_payment_id == payment_id
+    ):
+        return
     was_restricted = subscription.status in {
         Subscription.Status.GRACE,
         Subscription.Status.SUSPENDED,
@@ -130,17 +180,22 @@ def activate_payment_from_webhook(event):
     subscription.status = Subscription.Status.ACTIVE
     subscription.grace_ends_at = None
     subscription.suspended_at = None
+    subscription.suspension_reason = ""
+    subscription.last_payment_id = payment_id
     subscription.last_payment_status = payment_status
-    subscription.last_payment_at = timezone.now()
-    subscription.save(
-        update_fields=[
+    subscription.last_payment_at = event_at or timezone.now()
+    _save_transition(
+        subscription,
+        [
             "status",
             "grace_ends_at",
             "suspended_at",
+            "suspension_reason",
+            "last_payment_id",
             "last_payment_status",
             "last_payment_at",
-            "updated_at",
-        ]
+        ],
+        event_at,
     )
     action = (
         "BILLING_SUBSCRIPTION_REACTIVATED"
@@ -152,19 +207,36 @@ def activate_payment_from_webhook(event):
 
 def start_payment_grace_from_webhook(event):
     subscription, payment_id, payment_status = _locked_payment_subscription(event)
+    event_at = _provider_event_at(event)
     if (
-        subscription.status != Subscription.Status.GRACE
-        or subscription.grace_ends_at is None
+        subscription.status == Subscription.Status.CANCELED
+        or _is_stale_provider_event(subscription, event_at)
+        or (
+            subscription.status == Subscription.Status.SUSPENDED
+            and subscription.suspension_reason == "CHARGEBACK"
+        )
+        or subscription.grace_payment_id == payment_id
+        or (
+            subscription.status == Subscription.Status.ACTIVE
+            and subscription.last_payment_id == payment_id
+        )
     ):
-        subscription.start_grace(timezone.now())
+        return
+    subscription.status = Subscription.Status.GRACE
+    subscription.grace_ends_at = timezone.now() + timedelta(days=7)
+    subscription.last_payment_id = payment_id
+    subscription.grace_payment_id = payment_id
     subscription.last_payment_status = payment_status
-    subscription.save(
-        update_fields=[
+    _save_transition(
+        subscription,
+        [
             "status",
             "grace_ends_at",
+            "last_payment_id",
+            "grace_payment_id",
             "last_payment_status",
-            "updated_at",
-        ]
+        ],
+        event_at,
     )
     _audit_transition(
         event,
@@ -176,18 +248,28 @@ def start_payment_grace_from_webhook(event):
 
 def suspend_chargeback_from_webhook(event):
     subscription, payment_id, payment_status = _locked_payment_subscription(event)
+    event_at = _provider_event_at(event)
+    if subscription.status == Subscription.Status.CANCELED or _is_stale_provider_event(
+        subscription, event_at
+    ):
+        return
     subscription.status = Subscription.Status.SUSPENDED
     subscription.grace_ends_at = None
-    subscription.suspended_at = timezone.now()
+    subscription.suspended_at = event_at or timezone.now()
+    subscription.suspension_reason = "CHARGEBACK"
+    subscription.last_payment_id = payment_id
     subscription.last_payment_status = payment_status
-    subscription.save(
-        update_fields=[
+    _save_transition(
+        subscription,
+        [
             "status",
             "grace_ends_at",
             "suspended_at",
+            "suspension_reason",
+            "last_payment_id",
             "last_payment_status",
-            "updated_at",
-        ]
+        ],
+        event_at,
     )
     _audit_transition(
         event,
@@ -203,9 +285,27 @@ def cancel_subscription_from_webhook(event):
         provider=Subscription.Provider.ASAAS,
         provider_subscription_id=provider_subscription_id,
     )
+    event_at = _provider_event_at(event)
+    if subscription.status == Subscription.Status.CANCELED or _is_stale_provider_event(
+        subscription, event_at
+    ):
+        return
     subscription.status = Subscription.Status.CANCELED
-    subscription.canceled_at = timezone.now()
-    subscription.save(update_fields=["status", "canceled_at", "updated_at"])
+    subscription.grace_ends_at = None
+    subscription.suspended_at = None
+    subscription.suspension_reason = ""
+    subscription.canceled_at = event_at or timezone.now()
+    _save_transition(
+        subscription,
+        [
+            "status",
+            "grace_ends_at",
+            "suspended_at",
+            "suspension_reason",
+            "canceled_at",
+        ],
+        event_at,
+    )
     _audit_transition(event, subscription, "BILLING_SUBSCRIPTION_CANCELED")
 
 

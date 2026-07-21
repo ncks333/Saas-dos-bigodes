@@ -22,6 +22,7 @@ IMMEDIATE_SUSPENSION_EVENTS = {
     "PAYMENT_CHARGEBACK_DISPUTE",
 }
 CANCEL_EVENTS = {"SUBSCRIPTION_INACTIVATED", "SUBSCRIPTION_DELETED"}
+WEBHOOK_RECOVERY_BATCH_SIZE = 100
 
 
 def _apply_transition(event):
@@ -59,3 +60,15 @@ def process_billing_webhook(event_id):
             updated_at=timezone.now(),
         )
         raise
+
+
+@shared_task
+def redispatch_unprocessed_billing_webhooks():
+    event_ids = list(
+        BillingWebhookEvent.objects.filter(processed_at__isnull=True)
+        .order_by("id")
+        .values_list("id", flat=True)[:WEBHOOK_RECOVERY_BATCH_SIZE]
+    )
+    for event_id in event_ids:
+        process_billing_webhook.delay(event_id)
+    return len(event_ids)

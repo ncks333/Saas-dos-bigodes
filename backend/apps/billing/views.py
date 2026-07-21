@@ -74,7 +74,9 @@ class AsaasWebhookView(APIView):
     def post(self, request):
         received_token = request.headers.get("asaas-access-token", "")
         expected_token = settings.ASAAS_WEBHOOK_TOKEN
-        token_matches = hmac.compare_digest(received_token, expected_token)
+        token_matches = hmac.compare_digest(
+            received_token.encode(), expected_token.encode()
+        )
         if not expected_token or not token_matches:
             return Response(status=status.HTTP_401_UNAUTHORIZED)
 
@@ -84,12 +86,8 @@ class AsaasWebhookView(APIView):
         provider_event_id = payload.get("id")
         event_type = payload.get("event")
         if (
-            not isinstance(provider_event_id, str)
-            or not provider_event_id
-            or len(provider_event_id) > 150
-            or not isinstance(event_type, str)
-            or not event_type
-            or len(event_type) > 100
+            not _valid_provider_identifier(provider_event_id, 150)
+            or not _valid_provider_identifier(event_type, 100)
         ):
             return Response(status=status.HTTP_400_BAD_REQUEST)
 
@@ -101,6 +99,17 @@ class AsaasWebhookView(APIView):
                 "payload": sanitize_asaas_webhook_payload(payload),
             },
         )
-        if created:
-            process_billing_webhook.delay(event.id)
+        if created or event.processed_at is None:
+            try:
+                process_billing_webhook.delay(event.id)
+            except Exception:
+                return Response(status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response({"accepted": True}, status=status.HTTP_202_ACCEPTED)
+
+
+def _valid_provider_identifier(value, max_length):
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= max_length
+        and all(character.isprintable() and not character.isspace() for character in value)
+    )

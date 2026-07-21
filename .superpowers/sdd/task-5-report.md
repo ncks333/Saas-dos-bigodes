@@ -168,3 +168,169 @@ No concrete issue was found, so no post-GREEN behavior change was made.
 - Transaction-lock concurrency is implemented for PostgreSQL; SQLite test mode
   does not provide PostgreSQL-equivalent row-lock behavior, so tests validate
   idempotent outcomes and transaction rollback rather than lock contention.
+
+## WIP pause: independent-review blocker wave
+
+Paused by user deadline before any production implementation. This section
+records exact recoverable state; failing RED tests are intentionally
+uncommitted.
+
+### Tests added or changed
+
+`backend/tests/test_billing_webhooks.py` now contains RED coverage for:
+
+- broker publication failure returning HTTP 503 without storing broker error
+  details;
+- duplicate redelivery redispatching the same unprocessed row and transitioning
+  once;
+- processed duplicates not publishing again;
+- bounded recovery-task selection of unprocessed events only and one-minute
+  Celery Beat configuration;
+- valid outer `dateCreated` inclusion in the sanitized projection;
+- cancellation remaining terminal when delayed overdue arrives;
+- chargeback suspension resisting delayed overdue and same-payment success;
+- stale provider timestamp rejection;
+- newer different-payment success reactivating chargeback suspension;
+- `CHECKOUT_PAID` activating only `PENDING_CHECKOUT`;
+- same-payment overdue not opening a second grace after success;
+- a later different payment cycle opening a fresh exact seven-day grace;
+- non-ASCII webhook token rejection without server error;
+- whitespace-only, surrounding-whitespace, and control-character `id`/`event`
+  rejection.
+
+### RED evidence
+
+Command:
+
+```text
+/home/ncks/Documentos/Meus_projetos/Saas-dos-bigodes/.venv/bin/python -m pytest tests/test_billing_webhooks.py -q --no-cov
+```
+
+Observed result:
+
+```text
+18 failed, 27 passed in 2.65s
+```
+
+Expected failures proved all new blocker clusters are currently absent:
+publication exceptions escape instead of returning 503; recovery task and Beat
+entry do not exist; unsafe state transitions still occur; provider-cycle fields
+and outer timestamp projection do not exist; non-ASCII token comparison raises
+`TypeError`; malformed identifiers are accepted.
+
+### Remaining implementation
+
+1. Change webhook publication handling to return a safe 503 on `.delay()`
+   failure, redispatch every duplicate with `processed_at IS NULL`, and never
+   persist broker exception text.
+2. Add bounded `redispatch_unprocessed_billing_webhooks` task and one-minute
+   Celery Beat schedule.
+3. Add `Subscription` provider-cycle fields (`last_payment_id`,
+   `grace_payment_id`, `last_provider_event_at`, `suspension_reason`) with a
+   migration.
+4. Validate and sanitize outer `dateCreated`, then apply timestamp/state/payment
+   guards while holding the subscription row lock: canceled terminal,
+   checkout-only-pending, stale-event rejection, chargeback priority, and safe
+   newer-cycle reactivation.
+5. Enforce grace once per payment ID while allowing a later payment ID to start
+   a fresh grace cycle.
+6. Encode tokens before `compare_digest` and reject whitespace/control provider
+   identifiers.
+7. Run webhook/access focused suites, full backend suite, Ruff,
+   `makemigrations --check`, and `git diff --check`; append final GREEN evidence
+   and commit only after all pass.
+
+### Repository state at pause
+
+```text
+## feat/saas-onboarding-billing
+ M backend/tests/test_billing_webhooks.py
+```
+
+This report becomes modified by this WIP entry as well. No production file was
+changed during the blocker wave. No launched pytest or nested-review process
+remains running.
+
+Last safe commit: `8970aac feat: synchronize Asaas billing webhooks`.
+
+## Blocker wave: GREEN completion
+
+The intentional 18-test RED wave is now GREEN. Production changes add durable
+broker handoff recovery, provider-cycle state, normalized provider timestamps,
+and row-locked ordering guards without weakening the review tests.
+
+### Implementation
+
+- Ingestion returns HTTP 503 when broker publication fails, retains the
+  unprocessed deduplicated row without broker details, republishes unprocessed
+  duplicates, and does not republish processed duplicates.
+- A bounded recovery task republishes the oldest 100 unprocessed rows every
+  minute through Celery Beat.
+- `Subscription` now persists `last_payment_id`, `grace_payment_id`,
+  `last_provider_event_at`, and `suspension_reason`; migration `0002` adds all
+  four fields.
+- Outer `dateCreated` is parsed, required to be timezone-aware, normalized to
+  UTC, and included in the allowlisted payload projection only when valid.
+- Subscription locks now guard terminal cancellation, checkout activation,
+  stale timestamps, chargeback priority, and payment-cycle grace use.
+- Tokens are compared as UTF-8 bytes. Provider identifiers containing
+  whitespace or control characters are rejected before persistence.
+
+### GREEN evidence
+
+Focused webhook suite:
+
+```text
+/home/ncks/Documentos/Meus_projetos/Saas-dos-bigodes/.venv/bin/python -m pytest tests/test_billing_webhooks.py -q --no-cov
+45 passed in 2.02s
+```
+
+Webhook, access, and notification regressions:
+
+```text
+/home/ncks/Documentos/Meus_projetos/Saas-dos-bigodes/.venv/bin/python -m pytest tests/test_billing_webhooks.py tests/test_subscription_access.py tests/test_notifications.py -q --no-cov
+88 passed in 2.91s
+```
+
+Full backend suite:
+
+```text
+/home/ncks/Documentos/Meus_projetos/Saas-dos-bigodes/.venv/bin/python -m pytest -q
+152 passed, 3 warnings in 6.23s
+Required test coverage of 80% reached. Total coverage: 90.93%
+```
+
+The three warnings remain the existing PyJWT insecure test-key-length warnings.
+
+Static and migration checks:
+
+```text
+/home/ncks/Documentos/Meus_projetos/Saas-dos-bigodes/.venv/bin/python -m ruff check .
+All checks passed!
+
+DJANGO_SETTINGS_MODULE=core.settings.test /home/ncks/Documentos/Meus_projetos/Saas-dos-bigodes/.venv/bin/python manage.py makemigrations --check --dry-run
+No changes detected
+
+git diff --check
+passed
+```
+
+### Final self-review
+
+- Durability/idempotency: database uniqueness remains the ingestion authority;
+  both request redelivery and periodic recovery can safely enqueue the same row
+  because processor and subscription locks serialize work and `processed_at`
+  short-circuits completed events.
+- Ordering: ignored stale, terminal, and lower-priority transitions still mark
+  their webhook row processed atomically, but create no subscription mutation or
+  audit event. Ignored events do not advance `last_provider_event_at`.
+- Payment cycles: a payment ID consumes grace once; success retains that cycle
+  marker; a different payment can receive a fresh exact seven-day deadline.
+- Security: no raw payload, token, broker exception text, or exception message is
+  persisted. Sanitization remains allowlist-only.
+- Scope: no email behavior, tenant deletion, fixture changes, or
+  `Barbershop.active` writes were added. Tasks 1-4 remain untouched.
+
+Remaining concern: row-lock contention semantics require PostgreSQL; SQLite
+tests prove state outcomes and atomic rollback but cannot emulate PostgreSQL
+locking behavior.

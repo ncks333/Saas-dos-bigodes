@@ -45,9 +45,13 @@ class Subscription(TimestampedModel):
     current_period_ends_at = models.DateTimeField(null=True, blank=True)
     grace_ends_at = models.DateTimeField(null=True, blank=True)
     next_billing_at = models.DateTimeField(null=True, blank=True)
+    last_payment_id = models.CharField(max_length=100, blank=True)
+    grace_payment_id = models.CharField(max_length=100, blank=True)
     last_payment_status = models.CharField(max_length=50, blank=True)
     last_payment_at = models.DateTimeField(null=True, blank=True)
+    last_provider_event_at = models.DateTimeField(null=True, blank=True)
     suspended_at = models.DateTimeField(null=True, blank=True)
+    suspension_reason = models.CharField(max_length=50, blank=True)
     canceled_at = models.DateTimeField(null=True, blank=True)
 
     @classmethod
