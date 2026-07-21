@@ -217,10 +217,7 @@ def activate_checkout_from_webhook(event):
             ],
             event_at,
         )
-        User.objects.filter(
-            barbershop_id=subscription.barbershop_id,
-            is_active=False,
-        ).update(is_active=True)
+        _activate_subscription_owner(subscription)
         _audit_transition(event, subscription, "BILLING_TRIAL_ACTIVATED")
         return
 
@@ -269,11 +266,21 @@ def activate_checkout_from_webhook(event):
         ],
         event_at,
     )
-    User.objects.filter(
-        barbershop_id=subscription.barbershop_id,
-        is_active=False,
-    ).update(is_active=True)
+    _activate_subscription_owner(subscription)
     _audit_transition(event, subscription, "BILLING_SUBSCRIPTION_REACTIVATED")
+
+
+def _activate_subscription_owner(subscription):
+    owner = (
+        User.objects.filter(
+            barbershop_id=subscription.barbershop_id,
+            role=User.Role.ADMIN,
+        )
+        .order_by("id")
+        .first()
+    )
+    if owner is not None and not owner.is_active:
+        User.objects.filter(pk=owner.pk, is_active=False).update(is_active=True)
 
 
 def _expected_checkout_reference(subscription, checkout_id):

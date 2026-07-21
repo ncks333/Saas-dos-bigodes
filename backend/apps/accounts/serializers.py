@@ -1,7 +1,12 @@
+from django.contrib.auth.models import update_last_login
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from rest_framework.exceptions import PermissionDenied
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.serializers import (
+    TokenObtainPairSerializer,
+    TokenObtainSerializer,
+)
+from rest_framework_simplejwt.settings import api_settings
 
 from apps.billing.access import user_has_subscription_access
 
@@ -17,7 +22,7 @@ class LoginSerializer(TokenObtainPairSerializer):
         return token
 
     def validate(self, attrs):
-        data = super().validate(attrs)
+        data = TokenObtainSerializer.validate(self, attrs)
         if not self.user.barbershop_id:
             raise serializers.ValidationError("Usuário sem barbearia associada.")
         if not user_has_subscription_access(self.user):
@@ -27,6 +32,11 @@ class LoginSerializer(TokenObtainPairSerializer):
                     "detail": "Assinatura precisa ser regularizada.",
                 }
             )
+        refresh = self.get_token(self.user)
+        data["refresh"] = str(refresh)
+        data["access"] = str(refresh.access_token)
+        if api_settings.UPDATE_LAST_LOGIN:
+            update_last_login(None, self.user)
         data["user"] = {"id": self.user.id, "name": self.user.get_full_name(), "role": self.user.role}
         return data
 

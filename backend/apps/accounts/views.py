@@ -20,7 +20,7 @@ from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, Bl
 
 from apps.audit.services import record_event
 from apps.billing.access import user_has_subscription_access
-from core.permissions.roles import IsAdminRole
+from core.permissions.roles import IsAdminRole, IsTenantMember
 from .models import User
 from .serializers import ChangePasswordSerializer, LoginSerializer, UserSerializer
 from .throttles import LoginRateThrottle, PasswordResetRateThrottle
@@ -84,7 +84,7 @@ class LogoutAllView(APIView):
 
 
 class ChangePasswordView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsTenantMember]
 
     def post(self, request):
         serializer = ChangePasswordSerializer(data=request.data, context={"request": request})

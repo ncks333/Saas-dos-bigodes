@@ -9,6 +9,8 @@ from django.core import mail
 from django.core.management import CommandError, call_command
 from django.utils import timezone
 from django.core.signing import TimestampSigner
+from rest_framework.test import APIClient
+from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
 
 from apps.accounts.models import User
 from apps.audit.models import AuditEvent
@@ -44,8 +46,12 @@ def subscription_error_code(response):
 @pytest.mark.django_db
 @pytest.mark.parametrize("status", [Subscription.Status.SUSPENDED, Subscription.Status.CANCELED])
 def test_blocked_user_gets_no_jwt(client, user, subscription, status):
+    previous_login = timezone.now() - timedelta(days=2)
+    user.last_login = previous_login
+    user.save(update_fields=["last_login"])
     subscription.status = status
     subscription.save(update_fields=["status", "updated_at"])
+    outstanding_before = OutstandingToken.objects.filter(user=user).count()
 
     response = client.post(
         "/api/v1/auth/login/",
@@ -56,6 +62,9 @@ def test_blocked_user_gets_no_jwt(client, user, subscription, status):
     assert subscription_error_code(response) == SUBSCRIPTION_REQUIRED
     assert "access" not in response.data
     assert "refresh" not in response.data
+    user.refresh_from_db()
+    assert user.last_login == previous_login
+    assert OutstandingToken.objects.filter(user=user).count() == outstanding_before
 
 
 @pytest.mark.django_db
@@ -75,6 +84,56 @@ def test_blocked_user_cannot_refresh_existing_jwt(client, user, subscription, st
     assert response.status_code == 403
     assert subscription_error_code(response) == SUBSCRIPTION_REQUIRED
     assert "access" not in response.data
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "status", [Subscription.Status.SUSPENDED, Subscription.Status.CANCELED]
+)
+def test_blocked_user_cannot_change_password_with_existing_access_token(
+    client, user, subscription, status
+):
+    login = client.post(
+        "/api/v1/auth/login/",
+        {"username": user.username, "password": "Senha123"},
+    )
+    original_password = user.password
+    subscription.status = status
+    subscription.save(update_fields=["status", "updated_at"])
+    authenticated = APIClient()
+    authenticated.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+
+    response = authenticated.post(
+        "/api/v1/auth/change-password/",
+        {"current_password": "Senha123", "new_password": "NovaSenha456"},
+    )
+
+    user.refresh_from_db()
+    assert response.status_code == 403
+    assert user.password == original_password
+    assert user.check_password("Senha123")
+
+
+@pytest.mark.django_db
+def test_logout_endpoints_remain_available_after_subscription_is_blocked(
+    client, user, subscription
+):
+    login = client.post(
+        "/api/v1/auth/login/",
+        {"username": user.username, "password": "Senha123"},
+    )
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.save(update_fields=["status", "updated_at"])
+    authenticated = APIClient()
+    authenticated.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+
+    logout = authenticated.post(
+        "/api/v1/auth/logout/", {"refresh": login.data["refresh"]}
+    )
+    logout_all = authenticated.post("/api/v1/auth/logout-all/")
+
+    assert logout.status_code == 204
+    assert logout_all.status_code == 204
 
 
 @pytest.mark.django_db

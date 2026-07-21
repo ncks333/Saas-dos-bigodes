@@ -453,17 +453,18 @@ def test_webhook_storage_failure_can_fail_delivery(client, monkeypatch):
 
 
 @pytest.mark.django_db
-def test_checkout_paid_activates_tenant_users_exactly_once_without_enabling_shop(
+def test_checkout_paid_activates_only_owner_without_enabling_shop(
     client, pending_subscription
 ):
     shop = pending_subscription.barbershop
     shop.active = False
     shop.save(update_fields=["active", "updated_at"])
-    User.objects.create_user(
+    employee = User.objects.create_user(
         username="pending-employee",
         email="pending-employee@example.com",
         password="Senha123",
         barbershop=shop,
+        role=User.Role.EMPLOYEE,
         is_active=False,
     )
     payload = {
@@ -482,11 +483,15 @@ def test_checkout_paid_activates_tenant_users_exactly_once_without_enabling_shop
 
     pending_subscription.refresh_from_db()
     shop.refresh_from_db()
+    owner = shop.users.get(role=User.Role.ADMIN)
+    owner.refresh_from_db()
+    employee.refresh_from_db()
     assert first.status_code == second.status_code == 200
     assert pending_subscription.status == Subscription.Status.TRIAL
     assert pending_subscription.provider_checkout_id == "chk_pending"
     assert pending_subscription.provider_subscription_id == "sub_asaas_checkout"
-    assert not shop.users.filter(is_active=False).exists()
+    assert owner.is_active is True
+    assert employee.is_active is False
     assert shop.active is False
     assert BillingWebhookEvent.objects.filter(
         provider_event_id="evt_checkout_paid"
@@ -532,6 +537,14 @@ def test_regularization_checkout_paid_reactivates_blocked_subscription_once(
     )
     user.is_active = False
     user.save(update_fields=["is_active"])
+    inactive_employee = User.objects.create_user(
+        username=f"inactive-{starting_status.lower()}",
+        email=f"inactive-{starting_status.lower()}@example.com",
+        password="Senha123",
+        barbershop=subscription.barbershop,
+        role=User.Role.EMPLOYEE,
+        is_active=False,
+    )
     payload = {
         "id": f"evt_regularization_{starting_status.lower()}",
         "event": "CHECKOUT_PAID",
@@ -548,6 +561,7 @@ def test_regularization_checkout_paid_reactivates_blocked_subscription_once(
 
     subscription.refresh_from_db()
     user.refresh_from_db()
+    inactive_employee.refresh_from_db()
     assert first.status_code == second.status_code == 200
     assert subscription.status == Subscription.Status.ACTIVE
     assert subscription.provider_checkout_id == "chk_regularization"
@@ -556,6 +570,7 @@ def test_regularization_checkout_paid_reactivates_blocked_subscription_once(
     assert subscription.suspended_at is None
     assert subscription.canceled_at is None
     assert user.is_active is True
+    assert inactive_employee.is_active is False
     login = client.post(
         "/api/v1/auth/login/",
         {"username": user.username, "password": "Senha123"},
@@ -1219,6 +1234,7 @@ def test_processor_rolls_back_failure_and_can_retry(plan, monkeypatch):
         email="retry@example.com",
         password="Senha123",
         barbershop=shop,
+        role=User.Role.ADMIN,
         is_active=False,
     )
     subscription = Subscription.objects.create(
