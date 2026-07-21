@@ -1,4 +1,5 @@
 import hmac
+import logging
 from collections.abc import Mapping
 
 from django.conf import settings
@@ -34,6 +35,9 @@ from .tasks import (
     send_regularization_request_email,
 )
 from .throttles import RegularizationCheckoutThrottle, RegularizationRequestThrottle
+
+
+logger = logging.getLogger(__name__)
 
 
 class ProviderUnavailable(APIException):
@@ -188,9 +192,18 @@ class AsaasWebhookView(APIView):
                 if prepare_billing_webhook_dispatch(event.id):
                     process_billing_webhook.delay(event.id)
             except Exception:
-                release_billing_webhook_dispatch(event.id)
-                return Response(status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        return Response({"accepted": True}, status=status.HTTP_202_ACCEPTED)
+                logger.exception(
+                    "Webhook Asaas persistido, mas despacho imediato falhou",
+                    extra={"billing_webhook_event_id": event.id},
+                )
+                try:
+                    release_billing_webhook_dispatch(event.id)
+                except Exception:
+                    logger.exception(
+                        "Falha ao liberar lease de webhook Asaas persistido",
+                        extra={"billing_webhook_event_id": event.id},
+                    )
+        return Response({"accepted": True}, status=status.HTTP_200_OK)
 
 
 def _valid_provider_identifier(value, max_length):

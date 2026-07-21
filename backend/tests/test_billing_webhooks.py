@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from django.core import mail
-from django.db import IntegrityError, transaction
+from django.db import DatabaseError, IntegrityError, transaction
 from django.utils import timezone
 
 from apps.accounts.models import User
@@ -96,10 +96,43 @@ def test_valid_duplicate_is_acknowledged_without_duplicate_processing(client):
     first = post_webhook(client, payload)
     second = post_webhook(client, payload)
 
-    assert first.status_code == second.status_code == 202
+    assert first.status_code == second.status_code == 200
     event = BillingWebhookEvent.objects.get(provider_event_id="evt_duplicate")
     assert event.processed_at is not None
     assert BillingWebhookEvent.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_valid_webhook_returns_exact_200_after_durable_acceptance(client):
+    response = post_webhook(
+        client,
+        {"id": "evt_exact_200", "event": "UNMAPPED_EVENT"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"accepted": True}
+    assert BillingWebhookEvent.objects.filter(
+        provider_event_id="evt_exact_200"
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_webhook_storage_failure_can_fail_delivery(client, monkeypatch):
+    client.raise_request_exception = False
+    monkeypatch.setattr(
+        "apps.billing.views.BillingWebhookEvent.objects.get_or_create",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            DatabaseError("durable storage unavailable")
+        ),
+    )
+
+    response = post_webhook(
+        client,
+        {"id": "evt_storage_failure", "event": "UNMAPPED_EVENT"},
+    )
+
+    assert response.status_code == 500
+    assert BillingWebhookEvent.objects.count() == 0
 
 
 @pytest.mark.django_db
@@ -131,7 +164,7 @@ def test_checkout_paid_activates_tenant_users_exactly_once_without_enabling_shop
 
     pending_subscription.refresh_from_db()
     shop.refresh_from_db()
-    assert first.status_code == second.status_code == 202
+    assert first.status_code == second.status_code == 200
     assert pending_subscription.status == Subscription.Status.TRIAL
     assert pending_subscription.provider_checkout_id == "chk_pending"
     assert pending_subscription.provider_subscription_id == "sub_asaas_checkout"
@@ -196,7 +229,7 @@ def test_regularization_checkout_paid_reactivates_blocked_subscription_once(
 
     subscription.refresh_from_db()
     user.refresh_from_db()
-    assert first.status_code == second.status_code == 202
+    assert first.status_code == second.status_code == 200
     assert subscription.status == Subscription.Status.ACTIVE
     assert subscription.provider_checkout_id == "chk_regularization"
     assert subscription.provider_subscription_id == "sub_regularized"
@@ -257,7 +290,7 @@ def test_checkout_paid_recovers_matching_uncertain_regularization_checkout(
 
     subscription.refresh_from_db()
     user.refresh_from_db()
-    assert response.status_code == 202
+    assert response.status_code == 200
     assert subscription.status == Subscription.Status.ACTIVE
     assert subscription.regularization_checkout_state == "PAID"
     assert subscription.regularization_checkout_id == "chk_recovered"
@@ -303,7 +336,7 @@ def test_unrelated_checkout_cannot_reactivate_persisted_regularization_checkout(
 
     subscription.refresh_from_db()
     user.refresh_from_db()
-    assert response.status_code == 202
+    assert response.status_code == 200
     assert subscription.status == Subscription.Status.SUSPENDED
     assert subscription.provider_subscription_id == ""
     assert user.is_active is False
@@ -353,7 +386,7 @@ def test_legacy_created_checkout_requires_its_static_reference_and_exact_id(
 
     subscription.refresh_from_db()
     user.refresh_from_db()
-    assert response.status_code == 202
+    assert response.status_code == 200
     assert subscription.status == expected_status
     assert user.is_active is (expected_status == Subscription.Status.ACTIVE)
 
@@ -401,7 +434,7 @@ def test_legacy_attach_with_attempt_reference_allows_exact_webhook_recovery(
 
     subscription.refresh_from_db()
     user.refresh_from_db()
-    assert response.status_code == 202
+    assert response.status_code == 200
     assert subscription.status == Subscription.Status.ACTIVE
     assert subscription.regularization_checkout_state == "PAID"
     assert user.is_active is True
@@ -447,7 +480,7 @@ def test_old_attempt_checkout_cannot_reactivate_new_uncertain_attempt(
     event = BillingWebhookEvent.objects.get(
         provider_event_id="evt_old_regularization_attempt"
     )
-    assert response.status_code == 202
+    assert response.status_code == 200
     assert subscription.status == Subscription.Status.SUSPENDED
     assert subscription.regularization_checkout_state == "RECONCILIATION_REQUIRED"
     assert user.is_active is False
@@ -501,7 +534,7 @@ def test_distinct_regularization_reactivations_send_one_email_per_provider_event
                 "subscription": {"id": provider_subscription_id},
             },
         )
-        assert response.status_code == 202
+        assert response.status_code == 200
         if event_id == "evt_reactivate_one":
             subscription.refresh_from_db()
             subscription.status = Subscription.Status.SUSPENDED
@@ -558,7 +591,7 @@ def test_payment_success_activates_subscription(
     )
 
     subscription.refresh_from_db()
-    assert response.status_code == 202
+    assert response.status_code == 200
     assert subscription.status == Subscription.Status.ACTIVE
     assert subscription.last_payment_status == payment_status
     assert before <= subscription.last_payment_at <= timezone.now()
@@ -603,7 +636,7 @@ def test_payment_success_reactivates_and_clears_restrictions(
     )
 
     subscription.refresh_from_db()
-    assert response.status_code == 202
+    assert response.status_code == 200
     assert subscription.status == Subscription.Status.ACTIVE
     assert subscription.grace_ends_at is None
     assert subscription.suspended_at is None
@@ -642,7 +675,7 @@ def test_payment_failure_starts_exact_grace(
     )
 
     subscription.refresh_from_db()
-    assert response.status_code == 202
+    assert response.status_code == 200
     assert subscription.status == Subscription.Status.GRACE
     assert subscription.last_payment_status == payment_status
     assert before + timedelta(days=7) <= subscription.grace_ends_at
@@ -670,7 +703,7 @@ def test_repeated_overdue_events_preserve_first_grace_deadline(client, subscript
     )
 
     subscription.refresh_from_db()
-    assert first.status_code == second.status_code == 202
+    assert first.status_code == second.status_code == 200
     assert subscription.status == Subscription.Status.GRACE
     assert subscription.grace_ends_at == first_deadline
 
@@ -701,7 +734,7 @@ def test_chargeback_suspends_subscription_immediately(
     )
 
     subscription.refresh_from_db()
-    assert response.status_code == 202
+    assert response.status_code == 200
     assert subscription.status == Subscription.Status.SUSPENDED
     assert subscription.suspended_at is not None
     assert subscription.grace_ends_at is None
@@ -732,7 +765,7 @@ def test_subscription_cancellation_preserves_tenant_data(
     )
 
     subscription.refresh_from_db()
-    assert response.status_code == 202
+    assert response.status_code == 200
     assert subscription.status == Subscription.Status.CANCELED
     assert subscription.canceled_at is not None
     assert Barbershop.objects.filter(pk=shop_id).exists()
@@ -762,7 +795,7 @@ def test_unknown_event_is_safely_marked_processed(client, subscription):
 
     subscription.refresh_from_db()
     event = BillingWebhookEvent.objects.get(provider_event_id="evt_unknown")
-    assert response.status_code == 202
+    assert response.status_code == 200
     assert event.processed_at is not None
     assert event.processing_error == ""
     assert subscription.status == original_status
@@ -796,7 +829,7 @@ def test_webhook_persists_only_sanitized_projection(client):
     response = post_webhook(client, payload)
 
     event = BillingWebhookEvent.objects.get(provider_event_id="evt_sanitized")
-    assert response.status_code == 202
+    assert response.status_code == 200
     assert event.payload == {
         "dateCreated": "2026-07-20T12:30:00+00:00",
         "checkout": {
@@ -831,7 +864,7 @@ def test_malformed_known_event_is_stored_safely_for_processor_retry(client):
     event = BillingWebhookEvent.objects.get(
         provider_event_id="evt_malformed_checkout"
     )
-    assert response.status_code == 202
+    assert response.status_code == 200
     assert event.payload == {}
     assert event.processed_at is None
     assert event.processing_error == "ValueError"
@@ -919,10 +952,13 @@ def test_non_ascii_webhook_token_is_rejected_without_error(client):
 
 
 @pytest.mark.django_db
-def test_publish_failure_returns_503_and_redelivery_processes_same_row(
+def test_publish_failure_returns_200_and_recovery_processes_persisted_row(
     client, pending_subscription, monkeypatch
 ):
-    from apps.billing.tasks import process_billing_webhook
+    from apps.billing.tasks import (
+        process_billing_webhook,
+        redispatch_unprocessed_billing_webhooks,
+    )
 
     payload = {
         "id": "evt_publish_recovery",
@@ -942,20 +978,19 @@ def test_publish_failure_returns_503_and_redelivery_processes_same_row(
     first = post_webhook(client, payload)
 
     event = BillingWebhookEvent.objects.get(provider_event_id=payload["id"])
-    assert first.status_code == 503
+    assert first.status_code == 200
     assert event.processed_at is None
     assert event.processing_error == ""
     assert BillingWebhookEvent.objects.count() == 1
 
     monkeypatch.setattr(
-        "apps.billing.views.process_billing_webhook.delay",
+        "apps.billing.tasks.process_billing_webhook.delay",
         lambda event_id: process_billing_webhook.run(event_id),
     )
-    second = post_webhook(client, payload)
+    assert redispatch_unprocessed_billing_webhooks.run() == 1
 
     event.refresh_from_db()
     pending_subscription.refresh_from_db()
-    assert second.status_code == 202
     assert event.processed_at is not None
     assert BillingWebhookEvent.objects.count() == 1
     assert pending_subscription.status == Subscription.Status.TRIAL
@@ -963,16 +998,41 @@ def test_publish_failure_returns_503_and_redelivery_processes_same_row(
 
 
 @pytest.mark.django_db
+def test_broker_and_release_failure_still_acknowledges_durable_event(
+    client, monkeypatch
+):
+    monkeypatch.setattr(
+        "apps.billing.views.process_billing_webhook.delay",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("broker unavailable")),
+    )
+    monkeypatch.setattr(
+        "apps.billing.views.release_billing_webhook_dispatch",
+        lambda *_args: (_ for _ in ()).throw(DatabaseError("release unavailable")),
+    )
+
+    response = post_webhook(
+        client,
+        {"id": "evt_release_failure", "event": "UNMAPPED_EVENT"},
+    )
+
+    assert response.status_code == 200
+    assert BillingWebhookEvent.objects.filter(
+        provider_event_id="evt_release_failure",
+        processed_at__isnull=True,
+    ).exists()
+
+
+@pytest.mark.django_db
 def test_processed_duplicate_does_not_republish(client, monkeypatch):
     payload = {"id": "evt_processed_duplicate", "event": "UNMAPPED_EVENT"}
-    assert post_webhook(client, payload).status_code == 202
+    assert post_webhook(client, payload).status_code == 200
 
     monkeypatch.setattr(
         "apps.billing.views.process_billing_webhook.delay",
         lambda *_args: pytest.fail("processed duplicate must not republish"),
     )
 
-    assert post_webhook(client, payload).status_code == 202
+    assert post_webhook(client, payload).status_code == 200
 
 
 @pytest.mark.django_db
@@ -1056,8 +1116,8 @@ def test_canceled_subscription_ignores_delayed_overdue(client, subscription):
         created_at=older,
     )
 
-    assert post_webhook(client, cancel).status_code == 202
-    assert post_webhook(client, overdue).status_code == 202
+    assert post_webhook(client, cancel).status_code == 200
+    assert post_webhook(client, overdue).status_code == 200
 
     subscription.refresh_from_db()
     assert subscription.status == Subscription.Status.CANCELED
@@ -1224,7 +1284,7 @@ def test_checkout_paid_only_activates_pending_checkout(client, subscription):
     )
 
     subscription.refresh_from_db()
-    assert response.status_code == 202
+    assert response.status_code == 200
     assert subscription.status == Subscription.Status.ACTIVE
     assert subscription.provider_subscription_id == ""
 
@@ -1638,7 +1698,7 @@ def test_duplicate_during_dispatch_lease_does_not_enqueue_or_increment_attempts(
     )
 
     event.refresh_from_db()
-    assert response.status_code == 202
+    assert response.status_code == 200
     assert dispatched == []
     assert event.dispatch_attempts == 1
     assert event.next_dispatch_at == lease_ends_at
@@ -1668,7 +1728,7 @@ def test_duplicate_during_processing_backoff_does_not_enqueue_or_consume_attempt
     )
 
     event.refresh_from_db()
-    assert response.status_code == 202
+    assert response.status_code == 200
     assert dispatched == []
     assert event.dispatch_attempts == 2
     assert event.processing_attempts == 2
