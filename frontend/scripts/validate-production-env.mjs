@@ -3,6 +3,10 @@ export function validateProductionEnv(env) {
     throw new Error("VITE_API_URL deve ser configurada para o build de produção.");
   }
 
+  if (typeof env.VITE_TURNSTILE_SITE_KEY !== "string" || !env.VITE_TURNSTILE_SITE_KEY.trim()) {
+    throw new Error("VITE_TURNSTILE_SITE_KEY deve ser configurada para o build de produção.");
+  }
+
   const raw = env.VITE_MR_SOLUTIONS_WHATSAPP_URL;
   if (!raw) {
     throw new Error("VITE_MR_SOLUTIONS_WHATSAPP_URL deve ser configurada para o build de produção.");

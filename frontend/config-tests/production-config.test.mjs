@@ -6,6 +6,7 @@ import {validateProductionEnv} from "../scripts/validate-production-env.mjs";
 
 const valid = {
   VITE_API_URL: "https://api.mrbarberhub.com.br/api/v1",
+  VITE_TURNSTILE_SITE_KEY: "0x4AAAAAAAaBbCcDdEeFfGgHhIiJjKkLl",
   VITE_MR_SOLUTIONS_WHATSAPP_URL: "https://wa.me/5511999999999?text=Teste",
 };
 
@@ -35,7 +36,7 @@ const readmeCommands = [...readme.matchAll(/```(?:bash|powershell)\r?\n([\s\S]*?
   .flatMap(match => match[1].split(/\r?\n/))
   .map(command => command.trim())
   .filter(Boolean);
-const localViteEnv = "VITE_API_URL=http://localhost:8000/api/v1 VITE_MR_SOLUTIONS_WHATSAPP_URL=https://wa.me/5511999999999?text=Teste";
+const localViteEnv = "VITE_API_URL=http://localhost:8000/api/v1 VITE_TURNSTILE_SITE_KEY=1x00000000000000000000AA VITE_MR_SOLUTIONS_WHATSAPP_URL=https://wa.me/5511999999999?text=Teste";
 
 test("accepts canonical public production URLs", () => {
   assert.doesNotThrow(() => validateProductionEnv(valid));
@@ -46,6 +47,15 @@ test("rejects missing WhatsApp URL", () => {
     () => validateProductionEnv({...valid, VITE_MR_SOLUTIONS_WHATSAPP_URL: ""}),
     /VITE_MR_SOLUTIONS_WHATSAPP_URL/,
   );
+});
+
+test("rejects missing or blank Turnstile site key", () => {
+  for (const value of ["", "   "]) {
+    assert.throws(
+      () => validateProductionEnv({...valid, VITE_TURNSTILE_SITE_KEY: value}),
+      /VITE_TURNSTILE_SITE_KEY/,
+    );
+  }
 });
 
 test("rejects placeholder and non-wa.me contact URLs", () => {
@@ -96,6 +106,12 @@ test("versioned deployment docs require Vercel UI for the real WhatsApp URL", ()
     assert.match(document, /somente no painel da Vercel/i);
   }
   assert.doesNotMatch(deployGuide, /VITE_MR_SOLUTIONS_WHATSAPP_URL=https:\/\/wa\.me\/55\d/);
+});
+
+test("build docs list required public Turnstile site key", () => {
+  for (const document of [readme, deployGuide]) {
+    assert.match(document, /VITE_TURNSTILE_SITE_KEY/);
+  }
 });
 
 test("README operacional usa somente WhatsApp Cloud API oficial da Meta", () => {
@@ -165,8 +181,25 @@ test("subscription deployment docs match supported Asaas lifecycle", () => {
   assert.match(deployGuide, /não.*recuperação.*automática/i);
   assert.match(deployGuide, /reconciliação manual/i);
   assert.match(deployGuide, /checkout de teste/i);
+  assert.match(deployGuide, /checkout_url.*external_reference/i);
+  assert.match(deployGuide, /somente.*checkout_url.*redirect/i);
+  assert.match(deployGuide, /nem.*checkout_url.*nem.*external_reference.*pagamento/i);
+  assert.match(deployGuide, /copia.*plan\.trial_days.*subscription\.trial_days/i);
+  assert.match(deployGuide, /trial_ends_at.*antes.*checkout/i);
+  assert.match(deployGuide, /CHECKOUT_PAID.*datas.*armazenadas/i);
+  assert.match(deployGuide, /não.*relê.*plan\.trial_days/i);
+  assert.match(deployGuide, /subscription\.trial_days=60.*subscription\.trial_ends_at/i);
   assert.match(securityGuide, /dados de cartão.*payload.*provedor/i);
+  assert.match(securityGuide, /e-mails de ciclo.*idempotentes por evento/i);
+  assert.match(securityGuide, /e-mail de regularização.*token assinado.*uma hora/i);
+  assert.match(securityGuide, /requisições públicas repetidas.*podem.*enfileirar e-mails repetidos/i);
+  assert.match(securityGuide, /não enumera contas/i);
   assert.match(billingRunbook, /nunca execute novo checkout/i);
+});
+
+test("README names Resend HTTPS API instead of SMTP for transactional email", () => {
+  assert.match(readme, /e-mail transacional via Resend HTTPS API/i);
+  assert.doesNotMatch(readme, /SMTP transacional/i);
 });
 
 test("frontend production validator accepts only VITE public values", () => {

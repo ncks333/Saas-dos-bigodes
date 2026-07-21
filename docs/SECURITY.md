@@ -17,7 +17,8 @@
 - Asaas autentica webhook por `ASAAS_WEBHOOK_TOKEN` independente, comparado em tempo constante no endpoint `/api/v1/billing/webhooks/asaas/`.
 - Checkout e cobrança são confirmados apenas por webhook Asaas autenticado; callback ou redirect de navegador não concede acesso.
 - Segredos Asaas, Resend, banco, Django e JWT ficam somente em secrets/variáveis protegidas Railway. Frontend recebe somente `VITE_*` públicos.
-- Eventos de cobrança e e-mails são idempotentes. E-mail nunca contém dados de cartão, payload do provedor, token, chave ou referência do provedor.
+- E-mails de ciclo de cobrança são idempotentes por evento e nunca contêm dados de cartão, pagamento, payload, token, chave ou referência do provedor.
+- E-mail de regularização contém intencionalmente link com token assinado, válido por uma hora, para o administrador bloqueado. Requisições públicas repetidas podem enfileirar e-mails repetidos; resposta genérica não enumera contas.
 - Regularização com resultado ambíguo falha fechada em `RECONCILIATION_REQUIRED`; recuperação exige reconciliação manual documentada, nunca nova cobrança automática.
 
 ## Antes de produção

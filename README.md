@@ -37,7 +37,7 @@ Sem Docker, instale Python 3.13, PostgreSQL, Redis e Node 22; depois instale `ba
 ```bash
 cd frontend
 npm install
-VITE_API_URL=http://localhost:8000/api/v1 VITE_MR_SOLUTIONS_WHATSAPP_URL=https://wa.me/5511999999999?text=Teste npm run dev
+VITE_API_URL=http://localhost:8000/api/v1 VITE_TURNSTILE_SITE_KEY=1x00000000000000000000AA VITE_MR_SOLUTIONS_WHATSAPP_URL=https://wa.me/5511999999999?text=Teste npm run dev
 ```
 
 ## Testes e qualidade
@@ -46,7 +46,7 @@ VITE_API_URL=http://localhost:8000/api/v1 VITE_MR_SOLUTIONS_WHATSAPP_URL=https:/
 docker compose run --rm backend pytest
 docker compose run --rm backend ruff check .
 cd frontend
-VITE_API_URL=http://localhost:8000/api/v1 VITE_MR_SOLUTIONS_WHATSAPP_URL=https://wa.me/5511999999999?text=Teste npm run build
+VITE_API_URL=http://localhost:8000/api/v1 VITE_TURNSTILE_SITE_KEY=1x00000000000000000000AA VITE_MR_SOLUTIONS_WHATSAPP_URL=https://wa.me/5511999999999?text=Teste npm run build
 CHOKIDAR_USEPOLLING=true npm run test:e2e
 ```
 
@@ -54,9 +54,9 @@ O limite de cobertura está configurado em 80%. A suíte incluída estabelece a 
 
 ## Variáveis importantes
 
-Copie `.env.example`; nunca versione `.env`. Produção exige chaves independentes para Django e JWT, credenciais fortes, origens CORS/CSRF exatas, Turnstile, SMTP transacional e WhatsApp Cloud API oficial da Meta com uma integração configurada.
+Copie `.env.example`; nunca versione `.env`. Produção exige chaves independentes para Django e JWT, credenciais fortes, origens CORS/CSRF exatas, Turnstile, e-mail transacional via Resend HTTPS API e WhatsApp Cloud API oficial da Meta com uma integração configurada.
 
-O build do frontend também exige `VITE_MR_SOLUTIONS_WHATSAPP_URL`. O Compose usa apenas uma fixture fictícia para desenvolvimento local. Cadastre valor público real somente no painel da Vercel; nunca em `.env`, Docker, Compose, documentação ou Git.
+O build do frontend exige `VITE_TURNSTILE_SITE_KEY` e `VITE_MR_SOLUTIONS_WHATSAPP_URL`. O Compose usa apenas fixtures públicas fictícias para desenvolvimento local. Cadastre valores públicos reais somente no painel da Vercel; nunca em `.env`, Docker, Compose, documentação ou Git.
 
 Frontend aceita somente configuração pública `VITE_*`. Railway usa somente segredos para `ASAAS_API_KEY`, `ASAAS_WEBHOOK_TOKEN` e `RESEND_API_KEY`; eles nunca pertencem à Vercel, bundle do navegador ou repositório.
 
@@ -79,6 +79,6 @@ Consulte também [Agente de agendamento](docs/AGENT.md) para o prompt, as ferram
 
 O Compose é voltado a desenvolvimento/homologação. A produção está preparada para Vercel, Railway, Supabase e Upstash. Siga o [guia completo de deploy](docs/DEPLOY.md) e a [lista de controles de segurança](docs/SECURITY.md). Configure primeiro Asaas Sandbox, depois Asaas produção; ambos usam checkout hospedado e endpoint `/api/v1/billing/webhooks/asaas/`. Callback ou redirect não confirma pagamento: webhook autenticado confirma. Cadastre somente segredos Railway e nunca espere recuperação automática de checkout ambíguo; use a [runbook de reconciliação](docs/runbooks/billing-regularization-reconciliation.md).
 
-Trial padrão dura 30 dias. Piloto de 60 dias usa plano exclusivo `trial_days=60` vinculado à assinatura antes do checkout. `PAYMENT_OVERDUE` e `PAYMENT_REPROVED_BY_RISK_ANALYSIS` iniciam 7 dias de tolerância; após isso, acesso suspende até regularização por e-mail e webhook. Ciclo e-mail-primeiro não contém cartão, payload nem identificador do provedor. Limpe usuário e checkout de teste somente após smoke Sandbox; nunca apague dados produtivos para esse fim.
+Signup grava `subscription.trial_days` e `subscription.trial_ends_at` antes do checkout; `CHECKOUT_PAID` só ativa datas armazenadas. Para piloto de 60 dias antes desse webhook, atualize atomicamente `subscription.trial_days=60`, `subscription.trial_ends_at` e `next_billing_at`, nunca plano já usado pelo signup. `PAYMENT_OVERDUE` e `PAYMENT_REPROVED_BY_RISK_ANALYSIS` iniciam 7 dias de tolerância; após isso, acesso suspende até regularização por e-mail e webhook. Ciclo e-mail-primeiro: e-mails de ciclo são idempotentes por evento e não contêm cartão, pagamento, payload nem identificador do provedor; e-mail de regularização contém link assinado de uma hora e pedidos repetidos mantêm resposta não enumerável. Limpe usuário e checkout de teste somente após smoke Sandbox; nunca apague dados produtivos para esse fim.
 
 O antigo `main.py` foi preservado como protótipo didático; a aplicação comercial está em `backend/` e `frontend/`.

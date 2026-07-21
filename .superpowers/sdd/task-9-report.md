@@ -64,3 +64,42 @@ manual reconciliation, test-checkout cleanup, and validator secret boundary.
 - Migration dry-run warned that hostname `postgres` could not resolve, but completed with `No changes detected`.
 - E2E emitted non-fatal `NO_COLOR`/`FORCE_COLOR` warnings and one Vite proxy `ECONNREFUSED` for local backend; Playwright still completed 24/24.
 - Docker daemon socket was unavailable to current user, so Docker was not used for backend gates.
+
+## Review follow-up — 2026-07-21
+
+### RED
+
+After adding review assertions, `cd frontend && npm run test:config` returned
+16 passed and 4 failed. Failures proved that production validation accepted a
+missing `VITE_TURNSTILE_SITE_KEY`, README omitted that public build variable,
+deployment docs omitted exact signup-response/trial snapshot semantics, and
+README still named SMTP instead of Resend HTTPS API.
+
+### Fixes and GREEN
+
+- Production validator now requires non-empty, non-blank public
+  `VITE_TURNSTILE_SITE_KEY`; valid fixture and missing/blank tests cover it.
+- README and deployment build commands list the public site key. Backend
+  secrets remain excluded from frontend validation.
+- Security docs now limit idempotency/no-secret claim to lifecycle emails per
+  event. They explicitly document signed one-hour regularization link tokens,
+  repeated public request enqueue behavior, and non-enumerating response.
+- Deployment docs now state signup snapshots `plan.trial_days` into
+  `subscription.trial_days` and stores `trial_ends_at` before checkout;
+  `CHECKOUT_PAID` uses stored dates. Safe 60-day pilot operation updates
+  subscription fields atomically before webhook activation.
+- Signup response docs now distinguish `checkout_url` and
+  `external_reference`: browser redirects only with `checkout_url`; neither
+  is payment proof.
+- README now names e-mail transacional via Resend HTTPS API.
+
+Verification after fixes:
+
+- `cd frontend && npm run test:config` — 20 passed.
+- `cd frontend && VITE_API_URL=https://api.mrbarberhub.com.br/api/v1 VITE_TURNSTILE_SITE_KEY=1x00000000000000000000AA VITE_MR_SOLUTIONS_WHATSAPP_URL=https://wa.me/5511999999999?text=Teste npm run build` — passed.
+- `cd frontend && npm run lint` — passed.
+- `git diff --check` — passed.
+- Backend/full E2E gates unchanged from prior report; no backend behavior changed.
+
+`frontend/tsconfig.tsbuildinfo` changed during build and was restored before
+commit; it is intentionally excluded.

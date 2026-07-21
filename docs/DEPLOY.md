@@ -169,7 +169,7 @@ FRONTEND_URL=https://app.seudominio.com
 
 Gere `ASAAS_WEBHOOK_TOKEN` de forma independente de `ASAAS_API_KEY`, por exemplo `openssl rand -hex 32`. Cadastre-o no webhook Asaas e no secret Railway; não reutilize token de API, JWT ou chave Django. O endpoint é exatamente `POST https://api.mrbarberhub.com.br/api/v1/billing/webhooks/asaas/`; o Asaas envia token no cabeçalho `asaas-access-token`.
 
-O cadastro chama `POST /api/v1/billing/signup/` e retorna somente URL de checkout hospedado. Checkout tem recorrência mensal, cartão tratado pelo Asaas e expira após `ASAAS_CHECKOUT_EXPIRES_MINUTES` (default `60`). O navegador pode voltar para `/checkout/concluido`, `/checkout/cancelado` ou `/checkout/expirado`, mas callback ou redirect não confirma pagamento e nunca libera acesso. Somente webhook autenticado confirma transição.
+O cadastro chama `POST /api/v1/billing/signup/` e retorna `checkout_url` e `external_reference`. Browser usa somente `checkout_url` para redirect ao checkout hospedado; não use nem exponha `external_reference` no fluxo de navegação. Checkout tem recorrência mensal, cartão tratado pelo Asaas e expira após `ASAAS_CHECKOUT_EXPIRES_MINUTES` (default `60`). Nem `checkout_url` nem `external_reference` prova pagamento. O navegador pode voltar para `/checkout/concluido`, `/checkout/cancelado` ou `/checkout/expirado`, mas callback ou redirect não confirma pagamento e nunca libera acesso. Somente webhook autenticado confirma transição.
 
 ### Eventos habilitados e ciclo de acesso
 
@@ -181,7 +181,7 @@ Cadastre apenas estes eventos, pois são os únicos tratados pelo código:
 - `PAYMENT_CHARGEBACK_REQUESTED` e `PAYMENT_CHARGEBACK_DISPUTE`: suspendem imediatamente por chargeback.
 - `SUBSCRIPTION_INACTIVATED` e `SUBSCRIPTION_DELETED`: cancelam assinatura.
 
-O trial padrão é 30 dias. Para piloto de 60 dias por assinatura, vincule antes do checkout um plano piloto exclusivo com `trial_days=60`; o webhook lê `subscription.plan.trial_days`. Não altere o plano comum depois de o cliente entrar no trial. O sweep horário envia ciclo e-mail-primeiro: avisos de trial em 7, 3 e 1 dia, cobrança não confirmada, suspensão, reativação e cancelamento. Ao vencer `GRACE`, assinatura fica `SUSPENDED`; usuário não recebe JWT, mas pode pedir link de regularização por e-mail e concluir checkout hospedado.
+No signup, aplicação copia `plan.trial_days` para `subscription.trial_days` e calcula/persiste `subscription.trial_ends_at` antes de criar checkout. `CHECKOUT_PAID` apenas ativa `TRIAL` usando datas armazenadas na assinatura; não relê `plan.trial_days`. Trial padrão é 30 dias. Para piloto de 60 dias após signup e antes da ativação por webhook, faça operação administrativa controlada e atômica: defina `subscription.trial_days=60`, recalcule `subscription.trial_ends_at` a partir da data de criação da assinatura e ajuste `next_billing_at` para o ciclo posterior. Não altere plano para modificar trial já criado. O sweep horário envia ciclo e-mail-primeiro: avisos de trial em 7, 3 e 1 dia, cobrança não confirmada, suspensão, reativação e cancelamento. Ao vencer `GRACE`, assinatura fica `SUSPENDED`; usuário não recebe JWT, mas pode pedir link de regularização por e-mail e concluir checkout hospedado.
 
 O processamento é idempotente para eventos e e-mails. Falhas ambíguas de criação de checkout de regularização entram em `CREATING` ou `RECONCILIATION_REQUIRED`; não há recuperação automática. Siga a [runbook de reconciliação](runbooks/billing-regularization-reconciliation.md): confirme checkout no Asaas e execute reconciliação manual fail-closed antes de criar outro checkout.
 
@@ -205,7 +205,7 @@ Cadastre também `VITE_MR_SOLUTIONS_WHATSAPP_URL` com a URL HTTPS pública `wa.m
 
 O PostHog está configurado sem autocapture, gravação de sessão ou persistência em cookies/localStorage. Não envie nomes, telefones ou conteúdo de formulários como eventos.
 
-Vercel recebe somente valores públicos `VITE_*`. Nunca cadastre `ASAAS_API_KEY`, `ASAAS_WEBHOOK_TOKEN`, `RESEND_API_KEY`, `DJANGO_SECRET_KEY`, `JWT_SIGNING_KEY` ou `DATABASE_URL` no ambiente frontend; esses segredos existem somente na Railway.
+Vercel recebe somente valores públicos `VITE_*`, incluindo `VITE_TURNSTILE_SITE_KEY`. Nunca cadastre `ASAAS_API_KEY`, `ASAAS_WEBHOOK_TOKEN`, `RESEND_API_KEY`, `DJANGO_SECRET_KEY`, `JWT_SIGNING_KEY` ou `DATABASE_URL` no ambiente frontend; esses segredos existem somente na Railway.
 
 ## 7. Primeiro administrador
 
@@ -235,11 +235,11 @@ Após o sucesso, remova imediatamente `INITIAL_ADMIN_PASSWORD` das variáveis Ra
 - Cloudflare está em SSL/TLS **Full (strict)** e HTTPS obrigatório.
 - Asaas Sandbox: `GET /api/v1/billing/plans/current/` retorna plano; cadastro por `POST /api/v1/billing/signup/` abre somente checkout hospedado; callback do navegador não altera acesso.
 - Webhook Sandbox autenticado chega em `/api/v1/billing/webhooks/asaas/`; `CHECKOUT_PAID` ativa trial de 30 dias e duplicata não duplica transição/e-mail.
-- Piloto de 60 dias usa plano piloto vinculado à assinatura, não alteração manual de pagamento.
+- Piloto de 60 dias: antes de `CHECKOUT_PAID`, atualize de forma atômica `subscription.trial_days`, `subscription.trial_ends_at` e `next_billing_at`; não altere plano já usado pelo signup.
 - Simule `PAYMENT_OVERDUE`, confirme `GRACE` de 7 dias estável, depois regularize apenas por e-mail e webhook; simule chargeback, inativação e deleção em Sandbox.
 - Verifique domínio/remetente Resend e receba e-mail de ciclo sem cartão, payload ou referência do provedor.
 - Após smoke Sandbox, cancele/expire checkout de teste no painel Asaas, confirme que não há assinatura/pagamento ativo e remova usuário/tenant de teste apenas em ambiente não produtivo. Não apague dados de produção para limpeza.
-- Antes de liberar produção, execute gates: `cd backend && pytest`; `cd backend && ruff check .`; `cd backend && python manage.py makemigrations --check --dry-run`; `cd frontend && npm run test:config`; `cd frontend && VITE_API_URL=<API HTTPS> VITE_MR_SOLUTIONS_WHATSAPP_URL=<URL HTTPS wa.me aprovada> npm run build`; `cd frontend && npm run lint`; `cd frontend && CHOKIDAR_USEPOLLING=true npm run test:e2e`.
+- Antes de liberar produção, execute gates: `cd backend && pytest`; `cd backend && ruff check .`; `cd backend && python manage.py makemigrations --check --dry-run`; `cd frontend && npm run test:config`; `cd frontend && VITE_API_URL=<API HTTPS> VITE_TURNSTILE_SITE_KEY=<site-key-publica> VITE_MR_SOLUTIONS_WHATSAPP_URL=<URL HTTPS wa.me aprovada> npm run build`; `cd frontend && npm run lint`; `cd frontend && CHOKIDAR_USEPOLLING=true npm run test:e2e`.
 
 ## 8.1. Smoke test de desempenho antes da demonstração
 
