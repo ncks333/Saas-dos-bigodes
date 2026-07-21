@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -91,5 +91,103 @@ def test_initial_migration_backfills_existing_barbershops():
         assert plan.trial_days == 30
         assert subscription.plan_id == plan.id
         assert subscription.status == "ACTIVE"
+    finally:
+        MigrationExecutor(connection).migrate(original_targets)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_0003_migration_backfills_payment_cycle_history_and_blocks_delayed_grace():
+    executor = MigrationExecutor(connection)
+    original_targets = executor.loader.graph.leaf_nodes()
+    migration_from = ("billing", "0002_subscription_provider_cycle_fields")
+    migration_to = ("billing", "0003_webhook_recovery_and_payment_cycles")
+    try:
+        executor.migrate([migration_from])
+        old_apps = executor.loader.project_state([migration_from]).apps
+        barbershop = old_apps.get_model("barbershops", "Barbershop").objects.create(
+            name="Migração ciclos",
+            slug="migracao-ciclos",
+        )
+        plan = old_apps.get_model("billing", "SubscriptionPlan").objects.create(
+            code="migration-cycles",
+            name="Migration Cycles",
+            amount=Decimal("79.90"),
+        )
+        base_at = datetime(2026, 7, 20, 10, tzinfo=UTC)
+        subscription = old_apps.get_model("billing", "Subscription").objects.create(
+            barbershop_id=barbershop.id,
+            plan_id=plan.id,
+            status="ACTIVE",
+            provider_subscription_id="sub_migration_cycles",
+            last_payment_id="pay_b_migration",
+            grace_payment_id="pay_b_migration",
+            last_payment_status="RECEIVED",
+            last_payment_at=base_at + timedelta(hours=3),
+            last_provider_event_at=base_at + timedelta(hours=3),
+        )
+        old_event = old_apps.get_model("billing", "BillingWebhookEvent")
+        for index, (event_type, payment_id, payment_status) in enumerate(
+            [
+                ("PAYMENT_OVERDUE", "pay_a_migration", "OVERDUE"),
+                ("PAYMENT_RECEIVED", "pay_a_migration", "RECEIVED"),
+                ("PAYMENT_OVERDUE", "pay_b_migration", "OVERDUE"),
+                ("PAYMENT_RECEIVED", "pay_b_migration", "RECEIVED"),
+            ]
+        ):
+            event_at = base_at + timedelta(hours=index)
+            old_event.objects.create(
+                provider="ASAAS",
+                provider_event_id=f"evt_migration_{index}",
+                event_type=event_type,
+                payload={
+                    "dateCreated": event_at.isoformat(),
+                    "payment": {
+                        "id": payment_id,
+                        "subscription": subscription.provider_subscription_id,
+                        "status": payment_status,
+                    },
+                },
+                processed_at=event_at,
+            )
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([migration_to])
+        migrated_apps = executor.loader.project_state([migration_to]).apps
+        cycle_model = migrated_apps.get_model(
+            "billing", "SubscriptionPaymentCycle"
+        )
+        cycles = {
+            cycle.provider_payment_id: cycle
+            for cycle in cycle_model.objects.filter(subscription_id=subscription.id)
+        }
+        assert set(cycles) == {"pay_a_migration", "pay_b_migration"}
+        assert cycles["pay_a_migration"].grace_started_at == base_at
+        assert cycles["pay_a_migration"].succeeded_at == base_at + timedelta(hours=1)
+        assert cycles["pay_b_migration"].grace_started_at == base_at + timedelta(
+            hours=2
+        )
+        assert cycles["pay_b_migration"].succeeded_at == base_at + timedelta(
+            hours=3
+        )
+
+        delayed = BillingWebhookEvent.objects.create(
+            provider="ASAAS",
+            provider_event_id="evt_delayed_a_after_migration",
+            event_type="PAYMENT_OVERDUE",
+            payload={
+                "payment": {
+                    "id": "pay_a_migration",
+                    "subscription": subscription.provider_subscription_id,
+                    "status": "OVERDUE",
+                }
+            },
+        )
+        from apps.billing.tasks import process_billing_webhook
+
+        process_billing_webhook.run(delayed.id)
+
+        migrated_subscription = Subscription.objects.get(pk=subscription.id)
+        assert migrated_subscription.status == Subscription.Status.ACTIVE
+        assert migrated_subscription.grace_ends_at is None
     finally:
         MigrationExecutor(connection).migrate(original_targets)

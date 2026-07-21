@@ -105,7 +105,7 @@ class AsaasWebhookView(APIView):
         )
         if created or event.processed_at is None:
             try:
-                if prepare_billing_webhook_dispatch(event.id, force=True):
+                if prepare_billing_webhook_dispatch(event.id):
                     process_billing_webhook.delay(event.id)
             except Exception:
                 release_billing_webhook_dispatch(event.id)

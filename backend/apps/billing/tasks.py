@@ -44,15 +44,14 @@ def _apply_transition(event):
         cancel_subscription_from_webhook(event)
 
 
-def prepare_billing_webhook_dispatch(event_id, *, force=False, now=None):
+def prepare_billing_webhook_dispatch(event_id, *, now=None):
     dispatch_at = now or timezone.now()
     with transaction.atomic():
         event = BillingWebhookEvent.objects.select_for_update().get(pk=event_id)
         if event.processed_at is not None or event.dead_lettered_at is not None:
             return False
         if (
-            not force
-            and event.next_dispatch_at is not None
+            event.next_dispatch_at is not None
             and event.next_dispatch_at > dispatch_at
         ):
             return False

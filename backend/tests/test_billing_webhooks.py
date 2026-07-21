@@ -1232,3 +1232,110 @@ def test_webhook_recovery_has_eligibility_index():
         "next_dispatch_at",
         "id",
     ) in index_fields
+
+
+@pytest.mark.django_db
+def test_duplicate_during_dispatch_lease_does_not_enqueue_or_increment_attempts(
+    client, monkeypatch
+):
+    lease_ends_at = timezone.now() + timedelta(minutes=5)
+    event = create_unprocessed_event(
+        "evt_duplicate_active_lease",
+        dispatch_attempts=1,
+        last_dispatched_at=timezone.now(),
+        next_dispatch_at=lease_ends_at,
+    )
+    dispatched = []
+    monkeypatch.setattr(
+        "apps.billing.views.process_billing_webhook.delay", dispatched.append
+    )
+
+    response = post_webhook(
+        client,
+        {"id": event.provider_event_id, "event": event.event_type},
+    )
+
+    event.refresh_from_db()
+    assert response.status_code == 202
+    assert dispatched == []
+    assert event.dispatch_attempts == 1
+    assert event.next_dispatch_at == lease_ends_at
+
+
+@pytest.mark.django_db
+def test_duplicate_during_processing_backoff_does_not_enqueue_or_consume_attempt(
+    client, monkeypatch
+):
+    retry_at = timezone.now() + timedelta(minutes=4)
+    event = create_unprocessed_event(
+        "evt_duplicate_processing_backoff",
+        dispatch_attempts=2,
+        processing_attempts=2,
+        processing_error="ValueError",
+        last_processing_attempt_at=timezone.now(),
+        next_dispatch_at=retry_at,
+    )
+    dispatched = []
+    monkeypatch.setattr(
+        "apps.billing.views.process_billing_webhook.delay", dispatched.append
+    )
+
+    response = post_webhook(
+        client,
+        {"id": event.provider_event_id, "event": event.event_type},
+    )
+
+    event.refresh_from_db()
+    assert response.status_code == 202
+    assert dispatched == []
+    assert event.dispatch_attempts == 2
+    assert event.processing_attempts == 2
+    assert event.next_dispatch_at == retry_at
+
+
+@pytest.mark.django_db
+def test_undated_chargeback_clears_known_chronology_and_blocks_dated_reactivation(
+    client, subscription
+):
+    attach_provider_subscription(subscription)
+    prior_payment_at = datetime(2026, 7, 20, 10, tzinfo=UTC)
+    later_success_at = prior_payment_at + timedelta(hours=2)
+    post_webhook(
+        client,
+        payment_webhook_payload(
+            "evt_prior_dated_payment",
+            "PAYMENT_RECEIVED",
+            subscription,
+            "pay_prior_dated",
+            "RECEIVED",
+            created_at=prior_payment_at,
+        ),
+    )
+    post_webhook(
+        client,
+        payment_webhook_payload(
+            "evt_undated_chargeback",
+            "PAYMENT_CHARGEBACK_REQUESTED",
+            subscription,
+            "pay_undated_chargeback",
+            "CHARGEBACK_REQUESTED",
+        ),
+    )
+
+    post_webhook(
+        client,
+        payment_webhook_payload(
+            "evt_dated_success_after_undated_chargeback",
+            "PAYMENT_CONFIRMED",
+            subscription,
+            "pay_later_different",
+            "CONFIRMED",
+            created_at=later_success_at,
+        ),
+    )
+
+    subscription.refresh_from_db()
+    assert subscription.status == Subscription.Status.SUSPENDED
+    assert subscription.suspension_reason == "CHARGEBACK"
+    assert subscription.last_payment_id == "pay_undated_chargeback"
+    assert subscription.last_provider_event_at is None

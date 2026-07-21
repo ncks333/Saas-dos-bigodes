@@ -267,8 +267,9 @@ and row-locked ordering guards without weakening the review tests.
 ### Implementation
 
 - Ingestion returns HTTP 503 when broker publication fails, retains the
-  unprocessed deduplicated row without broker details, republishes unprocessed
-  duplicates, and does not republish processed duplicates.
+  unprocessed deduplicated row without broker details, republishes only
+  currently eligible unprocessed duplicates, and does not republish processed
+  duplicates.
 - A bounded recovery task republishes the oldest 100 eligible unprocessed rows
   every minute through Celery Beat.
 - `Subscription` now persists `last_payment_id`, `grace_payment_id`,
@@ -323,9 +324,9 @@ passed
 ### Final self-review
 
 - Durability/idempotency: database uniqueness remains the ingestion authority;
-  both request redelivery and periodic recovery can safely enqueue the same row
-  because processor and subscription locks serialize work and `processed_at`
-  short-circuits completed events.
+  eligible request redelivery and periodic recovery can safely enqueue the same
+  row because processor and subscription locks serialize work and
+  `processed_at` short-circuits completed events.
 - Ordering: ignored stale, terminal, and lower-priority transitions still mark
   their webhook row processed atomically, but create no subscription mutation or
   audit event. Ignored events do not advance `last_provider_event_at`.
@@ -433,3 +434,104 @@ passed
 
 Remaining concern remains test-environment fidelity: SQLite validates outcomes,
 constraints, and rollback but not PostgreSQL-equivalent lock contention.
+
+## Final Task 5 re-review closure
+
+Date: 2026-07-21
+
+### RED evidence
+
+Tests were added before production changes. Command:
+
+```text
+/home/ncks/Documentos/Meus_projetos/Saas-dos-bigodes/.venv/bin/python -m pytest tests/test_billing_webhooks.py tests/test_billing_models.py -q --no-cov
+4 failed, 62 passed in 4.26s
+```
+
+Failures proved all remaining findings: duplicate delivery bypassed active
+dispatch leases and processing backoff, undated chargeback retained an older
+known timestamp and allowed reactivation, and migration `0003` created no cycle
+history from `0002` data.
+
+### Implementation
+
+- Webhook ingestion now uses normal `next_dispatch_at` eligibility. The unused
+  force-dispatch option was removed, so duplicate delivery cannot bypass a
+  lease or processing backoff. Initial rows remain eligible, and broker failure
+  still releases the lease for immediate redelivery.
+- An undated chargeback explicitly clears `last_provider_event_at`. Webhook
+  reactivation therefore fails closed until chargeback chronology is known;
+  dated chargeback followed by a strictly newer different payment still
+  reactivates.
+- Migration `0003` now runs a historical-model-safe, idempotent data backfill
+  after cycle-table creation. It resolves unique provider subscription IDs,
+  imports processed sanitized payment failure/success events, and fills any
+  remaining grace/last-payment markers. Reverse migration uses noop.
+- Backfill keeps the earliest known grace and success timestamp per unique
+  subscription/payment cycle. Ambiguous provider subscription IDs are skipped
+  rather than assigned incorrectly.
+
+### GREEN evidence
+
+Webhook and migration/model tests:
+
+```text
+/home/ncks/Documentos/Meus_projetos/Saas-dos-bigodes/.venv/bin/python -m pytest tests/test_billing_webhooks.py tests/test_billing_models.py -q --no-cov
+66 passed in 4.80s
+```
+
+Focused webhook suite:
+
+```text
+/home/ncks/Documentos/Meus_projetos/Saas-dos-bigodes/.venv/bin/python -m pytest tests/test_billing_webhooks.py -q --no-cov
+58 passed in 2.77s
+```
+
+Webhook, access, and notification regressions:
+
+```text
+/home/ncks/Documentos/Meus_projetos/Saas-dos-bigodes/.venv/bin/python -m pytest tests/test_billing_webhooks.py tests/test_subscription_access.py tests/test_notifications.py -q --no-cov
+101 passed in 3.06s
+```
+
+Full backend suite:
+
+```text
+/home/ncks/Documentos/Meus_projetos/Saas-dos-bigodes/.venv/bin/python -m pytest -q
+166 passed, 3 warnings in 8.65s
+Required test coverage of 80% reached. Total coverage: 91.01%
+```
+
+The three warnings remain existing PyJWT insecure test-key-length warnings.
+
+Static and migration checks:
+
+```text
+/home/ncks/Documentos/Meus_projetos/Saas-dos-bigodes/.venv/bin/python -m ruff check .
+All checks passed!
+
+DJANGO_SETTINGS_MODULE=core.settings.test /home/ncks/Documentos/Meus_projetos/Saas-dos-bigodes/.venv/bin/python manage.py makemigrations --check --dry-run
+No changes detected
+
+git diff --check
+passed
+```
+
+### Final self-review
+
+- Duplicate eligibility: active leases/backoff leave dispatch and processing
+  attempt counts unchanged; broker-failure release remains immediately
+  dispatchable.
+- Chronology: prior dated T0, undated chargeback, then different dated T1 stays
+  suspended. Dated chargeback plus strictly newer different payment remains
+  covered and GREEN.
+- Upgrade safety: MigrationExecutor verifies `0002` A/B event history creates
+  durable cycles under `0003`; an undated delayed A overdue event cannot reopen
+  grace afterward.
+- Migration safety: only historical app models are used; malformed, ambiguous,
+  or unresolvable data is skipped; reruns update no duplicate cycle rows.
+- Scope/security: no raw payload expansion, secrets, exception messages, email
+  behavior, fixture changes, or `Barbershop.active` writes were added.
+
+Remaining concern remains SQLite's lack of PostgreSQL-equivalent row-lock
+contention; migration state, uniqueness, outcomes, and rollback are covered.

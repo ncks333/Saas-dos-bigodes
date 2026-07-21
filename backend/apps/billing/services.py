@@ -276,16 +276,20 @@ def suspend_chargeback_from_webhook(event):
     subscription.suspension_reason = "CHARGEBACK"
     subscription.last_payment_id = payment_id
     subscription.last_payment_status = payment_status
+    update_fields = [
+        "status",
+        "grace_ends_at",
+        "suspended_at",
+        "suspension_reason",
+        "last_payment_id",
+        "last_payment_status",
+    ]
+    if event_at is None:
+        subscription.last_provider_event_at = None
+        update_fields.append("last_provider_event_at")
     _save_transition(
         subscription,
-        [
-            "status",
-            "grace_ends_at",
-            "suspended_at",
-            "suspension_reason",
-            "last_payment_id",
-            "last_payment_status",
-        ],
+        update_fields,
         event_at,
     )
     _audit_transition(
