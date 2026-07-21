@@ -134,6 +134,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.billing.tasks.recover_billing_notification_emails",
         "schedule": 60.0,
     },
+    "billing-regularization-request-recovery-every-minute": {
+        "task": "apps.billing.tasks.recover_regularization_email_requests",
+        "schedule": 60.0,
+    },
     "billing-lifecycle-sweep-hourly": {
         "task": "apps.billing.tasks.sweep_subscription_lifecycle",
         "schedule": 3600.0,

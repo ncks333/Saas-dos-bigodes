@@ -25,6 +25,7 @@ from .serializers import (
 from .services import (
     provision_regularization_checkout,
     provision_signup,
+    persist_regularization_email_request,
     regularization_subscription_from_token,
     sanitize_asaas_webhook_payload,
 )
@@ -100,12 +101,14 @@ class RegularizationRequestView(APIView):
     def post(self, request):
         serializer = RegularizationRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        try:
-            send_regularization_request_email.delay(
-                serializer.validated_data["email"]
-            )
-        except Exception:
-            pass
+        email_request = persist_regularization_email_request(
+            serializer.validated_data["email"]
+        )
+        if email_request is not None:
+            try:
+                send_regularization_request_email.delay(email_request.id)
+            except Exception:
+                pass
         return Response(
             {
                 "message": (

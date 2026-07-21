@@ -5,7 +5,6 @@ from uuid import uuid4
 
 from celery import shared_task
 from django.conf import settings
-from django.core.mail import send_mail
 from django.core.mail import EmailMultiAlternatives
 from django.db import IntegrityError, transaction
 from django.db.models import Q
@@ -13,7 +12,12 @@ from django.utils import timezone
 
 from apps.accounts.models import User
 
-from .models import BillingNotificationLog, BillingWebhookEvent, Subscription
+from .models import (
+    BillingNotificationLog,
+    BillingWebhookEvent,
+    RegularizationEmailRequest,
+    Subscription,
+)
 from .services import (
     activate_checkout_from_webhook,
     activate_payment_from_webhook,
@@ -21,6 +25,7 @@ from .services import (
     checkout_subscription_from_webhook,
     end_checkout_from_webhook,
     make_regularization_token,
+    regularization_email_hash,
     start_payment_grace_from_webhook,
     suspend_chargeback_from_webhook,
 )
@@ -44,6 +49,10 @@ WEBHOOK_MAX_PROCESSING_ATTEMPTS = 5
 LIFECYCLE_SWEEP_WINDOW = timedelta(hours=1)
 NOTIFICATION_RECOVERY_BATCH_SIZE = 100
 NOTIFICATION_SENDING_LEASE = timedelta(minutes=5)
+REGULARIZATION_REQUEST_RECOVERY_BATCH_SIZE = 100
+REGULARIZATION_REQUEST_SENDING_LEASE = timedelta(minutes=5)
+REGULARIZATION_REQUEST_RETRY_BASE_SECONDS = 60
+REGULARIZATION_REQUEST_MAX_ATTEMPTS = 5
 BILLING_IDEMPOTENCY_KEY_PREFIX = "billing-notification-"
 MAX_RESEND_IDEMPOTENCY_KEY_LENGTH = 256
 
@@ -92,27 +101,155 @@ BILLING_EMAIL_TEMPLATES = {
 }
 
 
+def _claim_regularization_email_request(request_id):
+    now = timezone.now()
+    claim_token = uuid4()
+    with transaction.atomic():
+        email_request = (
+            RegularizationEmailRequest.objects.select_for_update()
+            .select_related("user", "subscription")
+            .filter(pk=request_id)
+            .first()
+        )
+        if (
+            email_request is None
+            or email_request.status
+            not in {
+                RegularizationEmailRequest.Status.PENDING,
+                RegularizationEmailRequest.Status.FAILED,
+            }
+            or email_request.next_attempt_at > now
+            or email_request.expires_at <= now
+            or email_request.attempts >= REGULARIZATION_REQUEST_MAX_ATTEMPTS
+        ):
+            return None
+        user = email_request.user
+        subscription = email_request.subscription
+        normalized_email = user.email.strip().lower()
+        if (
+            user.role != User.Role.ADMIN
+            or user.barbershop_id != subscription.barbershop_id
+            or subscription.allows_access
+            or regularization_email_hash(normalized_email)
+            != email_request.email_hash
+        ):
+            email_request.status = RegularizationEmailRequest.Status.DISCARDED
+            email_request.claim_token = None
+            email_request.save(
+                update_fields=["status", "claim_token", "updated_at"]
+            )
+            return None
+
+        email_request.status = RegularizationEmailRequest.Status.SENDING
+        email_request.claim_token = claim_token
+        email_request.attempts += 1
+        if email_request.email_snapshot is None:
+            token = make_regularization_token(subscription)
+            regularization_url = (
+                f"{settings.FRONTEND_URL.rstrip('/')}/regularizar?token={token}"
+            )
+            email_request.email_snapshot = {
+                "to": [user.email],
+                "from": settings.DEFAULT_FROM_EMAIL,
+                "subject": "Regularização de assinatura",
+                "body": (
+                    "Use este link para regularizar sua assinatura:\n\n"
+                    f"{regularization_url}"
+                ),
+            }
+        email_request.save(
+            update_fields=[
+                "status",
+                "claim_token",
+                "attempts",
+                "email_snapshot",
+                "updated_at",
+            ]
+        )
+        return claim_token, email_request.email_snapshot, email_request.attempts
+
+
 @shared_task
-def send_regularization_request_email(normalized_email):
-    user = (
-        User.objects.filter(email__iexact=normalized_email, role=User.Role.ADMIN)
-        .select_related("barbershop")
-        .first()
-    )
-    if user is None or user.barbershop_id is None:
+def send_regularization_request_email(request_id):
+    claim = _claim_regularization_email_request(request_id)
+    if claim is None:
         return False
-    subscription = Subscription.objects.filter(barbershop_id=user.barbershop_id).first()
-    if subscription is None or subscription.allows_access:
-        return False
-    token = make_regularization_token(subscription)
-    regularization_url = f"{settings.FRONTEND_URL.rstrip('/')}/regularizar?token={token}"
-    send_mail(
-        "Regularização de assinatura",
-        "Use este link para regularizar sua assinatura:\n\n" f"{regularization_url}",
-        None,
-        [user.email],
+    claim_token, snapshot, attempt_number = claim
+    try:
+        message = EmailMultiAlternatives(
+            snapshot["subject"],
+            snapshot["body"],
+            snapshot["from"],
+            snapshot["to"],
+            headers={"Idempotency-Key": f"regularization-request-{request_id}"},
+        )
+        if message.send(fail_silently=False) != 1:
+            raise RuntimeError("Regularization email backend did not confirm delivery")
+    except Exception:
+        retry_at = timezone.now() + timedelta(
+            seconds=REGULARIZATION_REQUEST_RETRY_BASE_SECONDS
+            * 2 ** (attempt_number - 1)
+        )
+        RegularizationEmailRequest.objects.filter(
+            pk=request_id,
+            status=RegularizationEmailRequest.Status.SENDING,
+            claim_token=claim_token,
+        ).update(
+            status=RegularizationEmailRequest.Status.FAILED,
+            claim_token=None,
+            next_attempt_at=retry_at,
+            updated_at=timezone.now(),
+        )
+        raise
+    RegularizationEmailRequest.objects.filter(
+        pk=request_id,
+        status=RegularizationEmailRequest.Status.SENDING,
+        claim_token=claim_token,
+    ).update(
+        status=RegularizationEmailRequest.Status.SENT,
+        claim_token=None,
+        sent_at=timezone.now(),
+        updated_at=timezone.now(),
     )
     return True
+
+
+@shared_task
+def recover_regularization_email_requests():
+    now = timezone.now()
+    RegularizationEmailRequest.objects.filter(expires_at__lte=now).delete()
+    RegularizationEmailRequest.objects.filter(
+        status=RegularizationEmailRequest.Status.SENDING,
+        attempts__lt=REGULARIZATION_REQUEST_MAX_ATTEMPTS,
+        updated_at__lte=now - REGULARIZATION_REQUEST_SENDING_LEASE,
+        expires_at__gt=now,
+    ).update(
+        status=RegularizationEmailRequest.Status.FAILED,
+        claim_token=None,
+        next_attempt_at=now,
+        updated_at=now,
+    )
+    request_ids = list(
+        RegularizationEmailRequest.objects.filter(
+            status__in={
+                RegularizationEmailRequest.Status.PENDING,
+                RegularizationEmailRequest.Status.FAILED,
+            },
+            attempts__lt=REGULARIZATION_REQUEST_MAX_ATTEMPTS,
+            next_attempt_at__lte=now,
+            expires_at__gt=now,
+        )
+        .order_by("id")
+        .values_list("id", flat=True)[:REGULARIZATION_REQUEST_RECOVERY_BATCH_SIZE]
+    )
+    dispatched_count = 0
+    for request_id in request_ids:
+        try:
+            send_regularization_request_email.delay(request_id)
+        except Exception:
+            continue
+        dispatched_count += 1
+    return dispatched_count
 
 
 def _event_subscription(event):

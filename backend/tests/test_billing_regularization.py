@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 from datetime import timedelta
 from unittest.mock import patch
 from uuid import uuid4
@@ -15,6 +17,8 @@ from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
 from apps.accounts.models import User
 from apps.audit.models import AuditEvent
 from apps.billing.models import Subscription
+from apps.billing import models as billing_models
+from apps.billing import tasks as billing_tasks
 from apps.billing.providers.asaas import CheckoutResult
 from apps.billing.providers.asaas import (
     AsaasCheckoutError,
@@ -169,8 +173,8 @@ def test_regularization_request_does_not_enumerate_email_and_only_emails_admins(
 
 
 @pytest.mark.django_db
-def test_regularization_request_enqueues_every_normalized_email_with_identical_response(
-    client, user, subscription, monkeypatch
+def test_regularization_request_persists_only_known_normalized_admin(
+    client, user, subscription, monkeypatch, settings
 ):
     subscription.status = Subscription.Status.SUSPENDED
     subscription.save(update_fields=["status", "updated_at"])
@@ -189,28 +193,54 @@ def test_regularization_request_enqueues_every_normalized_email_with_identical_r
 
     assert known.status_code == unknown.status_code == 200
     assert known.data == unknown.data == {"message": REGULARIZATION_MESSAGE}
-    assert queued == [user.email, "nobody@example.com"]
+    request = billing_models.RegularizationEmailRequest.objects.get()
+    expected_hash = hmac.new(
+        settings.SECRET_KEY.encode(),
+        user.email.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    assert queued == [request.id]
+    assert request.subscription_id == subscription.id
+    assert request.user_id == user.id
+    assert request.email_hash == expected_hash
+    assert request.email_snapshot is None
+    assert not any(
+        field.name in {"email", "normalized_email"}
+        for field in billing_models.RegularizationEmailRequest._meta.fields
+    )
     assert mail.outbox == []
 
 
 @pytest.mark.django_db
-def test_regularization_request_task_emails_only_blocked_admin(user, subscription):
+def test_regularization_request_task_emails_only_blocked_admin(
+    client, user, subscription, monkeypatch
+):
     subscription.status = Subscription.Status.SUSPENDED
     subscription.save(update_fields=["status", "updated_at"])
+    queued = []
+    monkeypatch.setattr(
+        "apps.billing.views.send_regularization_request_email.delay",
+        queued.append,
+    )
+    client.post("/api/v1/billing/regularization/request/", {"email": user.email})
 
-    send_regularization_request_email.run(user.email)
+    send_regularization_request_email.run(queued[0])
 
     assert len(mail.outbox) == 1
     assert mail.outbox[0].to == [user.email]
 
 
 @pytest.mark.django_db
-def test_regularization_request_hides_mail_task_failure(client, user, subscription, monkeypatch):
+def test_regularization_request_hides_mail_task_failure(
+    client, user, subscription, monkeypatch
+):
     subscription.status = Subscription.Status.SUSPENDED
     subscription.save(update_fields=["status", "updated_at"])
     monkeypatch.setattr(
-        "apps.billing.tasks.send_mail",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("mail unavailable")),
+        "apps.billing.tasks.EmailMultiAlternatives.send",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("mail unavailable")
+        ),
     )
 
     response = client.post(
@@ -219,21 +249,162 @@ def test_regularization_request_hides_mail_task_failure(client, user, subscripti
 
     assert response.status_code == 200
     assert response.data == {"message": REGULARIZATION_MESSAGE}
+    request = billing_models.RegularizationEmailRequest.objects.get()
+    assert request.status == "FAILED"
+    assert request.email_snapshot["to"] == [user.email]
 
 
 @pytest.mark.django_db
-def test_regularization_request_hides_broker_failure(client, monkeypatch):
+def test_regularization_request_hides_broker_failure_for_known_and_unknown(
+    client, user, subscription, monkeypatch
+):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.save(update_fields=["status", "updated_at"])
     monkeypatch.setattr(
         "apps.billing.views.send_regularization_request_email.delay",
-        lambda _email: (_ for _ in ()).throw(RuntimeError("broker unavailable")),
+        lambda _request_id: (_ for _ in ()).throw(RuntimeError("broker unavailable")),
     )
 
-    response = client.post(
+    known = client.post(
+        "/api/v1/billing/regularization/request/", {"email": user.email}
+    )
+    unknown = client.post(
         "/api/v1/billing/regularization/request/", {"email": "nobody@example.com"}
     )
 
+    assert known.status_code == unknown.status_code == 200
+    assert known.data == unknown.data == {"message": REGULARIZATION_MESSAGE}
+    request = billing_models.RegularizationEmailRequest.objects.get()
+    assert request.status == "PENDING"
+    assert "nobody@example.com" not in str(
+        list(billing_models.RegularizationEmailRequest.objects.values())
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_regularization_request_recovers_after_broker_failure(
+    client, user, subscription, monkeypatch
+):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.save(update_fields=["status", "updated_at"])
+    monkeypatch.setattr(
+        "apps.billing.views.send_regularization_request_email.delay",
+        lambda _request_id: (_ for _ in ()).throw(RuntimeError("broker unavailable")),
+    )
+    response = client.post(
+        "/api/v1/billing/regularization/request/", {"email": user.email}
+    )
+    request = billing_models.RegularizationEmailRequest.objects.get()
     assert response.status_code == 200
-    assert response.data == {"message": REGULARIZATION_MESSAGE}
+    assert request.status == "PENDING"
+
+    monkeypatch.setattr(
+        "apps.billing.tasks.send_regularization_request_email.delay",
+        lambda request_id: send_regularization_request_email.run(request_id),
+    )
+
+    assert billing_tasks.recover_regularization_email_requests.run() == 1
+    request.refresh_from_db()
+    assert request.status == "SENT"
+    assert len(mail.outbox) == 1
+    assert mail.outbox[0].to == [user.email]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_regularization_email_retry_reuses_snapshot_and_idempotency_key(
+    client, user, subscription, monkeypatch
+):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.save(update_fields=["status", "updated_at"])
+    monkeypatch.setattr(
+        "apps.billing.views.send_regularization_request_email.delay",
+        lambda _request_id: None,
+    )
+    client.post("/api/v1/billing/regularization/request/", {"email": user.email})
+    request = billing_models.RegularizationEmailRequest.objects.get()
+    attempts = []
+
+    def fail_then_send(message, **_kwargs):
+        attempts.append(
+            {
+                "to": list(message.to),
+                "subject": message.subject,
+                "body": message.body,
+                "key": message.extra_headers["Idempotency-Key"],
+            }
+        )
+        if len(attempts) == 1:
+            raise RuntimeError("mail unavailable")
+        return 1
+
+    monkeypatch.setattr(
+        "apps.billing.tasks.EmailMultiAlternatives.send",
+        fail_then_send,
+    )
+    with pytest.raises(RuntimeError, match="mail unavailable"):
+        send_regularization_request_email.run(request.id)
+    original_snapshot = billing_models.RegularizationEmailRequest.objects.get(
+        pk=request.id
+    ).email_snapshot
+    billing_models.RegularizationEmailRequest.objects.filter(pk=request.id).update(
+        next_attempt_at=timezone.now() - timedelta(seconds=1)
+    )
+    monkeypatch.setattr(
+        "apps.billing.tasks.send_regularization_request_email.delay",
+        lambda request_id: send_regularization_request_email.run(request_id),
+    )
+
+    assert billing_tasks.recover_regularization_email_requests.run() == 1
+    request.refresh_from_db()
+    assert request.email_snapshot == original_snapshot
+    assert attempts == [attempts[0], attempts[0]]
+    assert attempts[0]["key"] == f"regularization-request-{request.id}"
+    assert request.status == "SENT"
+
+
+@pytest.mark.django_db
+def test_regularization_recovery_is_attempt_bounded_and_purges_expired_rows(
+    client, user, subscription, monkeypatch
+):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.save(update_fields=["status", "updated_at"])
+    monkeypatch.setattr(
+        "apps.billing.views.send_regularization_request_email.delay",
+        lambda _request_id: None,
+    )
+    client.post("/api/v1/billing/regularization/request/", {"email": user.email})
+    request = billing_models.RegularizationEmailRequest.objects.get()
+    billing_models.RegularizationEmailRequest.objects.filter(pk=request.id).update(
+        status="FAILED",
+        attempts=billing_tasks.REGULARIZATION_REQUEST_MAX_ATTEMPTS,
+        next_attempt_at=timezone.now() - timedelta(seconds=1),
+    )
+    dispatched = []
+    monkeypatch.setattr(
+        "apps.billing.tasks.send_regularization_request_email.delay",
+        dispatched.append,
+    )
+
+    assert billing_tasks.recover_regularization_email_requests.run() == 0
+    assert dispatched == []
+
+    billing_models.RegularizationEmailRequest.objects.filter(pk=request.id).update(
+        expires_at=timezone.now() - timedelta(seconds=1),
+        email_snapshot={"to": [user.email]},
+    )
+    assert billing_tasks.recover_regularization_email_requests.run() == 0
+    assert not billing_models.RegularizationEmailRequest.objects.filter(
+        pk=request.id
+    ).exists()
+
+
+def test_regularization_request_recovery_has_minute_beat(settings):
+    assert settings.CELERY_BEAT_SCHEDULE[
+        "billing-regularization-request-recovery-every-minute"
+    ] == {
+        "task": "apps.billing.tasks.recover_regularization_email_requests",
+        "schedule": 60.0,
+    }
 
 
 @pytest.mark.django_db

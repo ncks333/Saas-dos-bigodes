@@ -155,3 +155,49 @@ class BillingNotificationLog(TimestampedModel):
                 name="unique_billing_notification_dedupe",
             )
         ]
+
+
+class RegularizationEmailRequest(TimestampedModel):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pendente"
+        SENDING = "SENDING", "Enviando"
+        SENT = "SENT", "Enviado"
+        FAILED = "FAILED", "Falhou"
+        DISCARDED = "DISCARDED", "Descartado"
+
+    subscription = models.ForeignKey(
+        Subscription,
+        on_delete=models.CASCADE,
+        related_name="regularization_email_requests",
+    )
+    user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.CASCADE,
+        related_name="billing_regularization_email_requests",
+    )
+    email_hash = models.CharField(max_length=64)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    attempts = models.PositiveSmallIntegerField(default=0)
+    claim_token = models.UUIDField(null=True, blank=True, editable=False)
+    email_snapshot = models.JSONField(null=True, blank=True)
+    next_attempt_at = models.DateTimeField()
+    expires_at = models.DateTimeField()
+    sent_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["subscription", "email_hash"],
+                name="unique_regularization_email_request",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=["status", "next_attempt_at", "expires_at", "id"],
+                name="billing_reg_email_recovery_idx",
+            )
+        ]

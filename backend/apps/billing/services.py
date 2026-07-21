@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import logging
 import time as time_module
 from collections.abc import Mapping
@@ -16,7 +18,11 @@ from apps.accounts.models import User
 from apps.audit import services as audit_services
 from apps.barbershops.models import Barbershop, OperatingHour
 
-from .models import Subscription, SubscriptionPaymentCycle
+from .models import (
+    RegularizationEmailRequest,
+    Subscription,
+    SubscriptionPaymentCycle,
+)
 from .providers.asaas import (
     AsaasCheckoutError,
     AsaasCheckoutNotCreatedError,
@@ -36,6 +42,7 @@ REGULARIZATION_TOKEN_MAX_AGE = 60 * 60
 REGULARIZATION_CHECKOUT_WAIT_SECONDS = 12
 REGULARIZATION_CHECKOUT_POLL_SECONDS = 0.05
 REGULARIZATION_CLAIM_STALE_AFTER = timedelta(minutes=5)
+REGULARIZATION_EMAIL_REQUEST_TTL = timedelta(hours=24)
 
 SAFE_WEBHOOK_FIELDS = {
     "checkout": {
@@ -604,6 +611,53 @@ def make_regularization_token(subscription):
     return TimestampSigner(salt=REGULARIZATION_TOKEN_SALT).sign(
         str(subscription.external_reference)
     )
+
+
+def persist_regularization_email_request(normalized_email):
+    normalized_email = normalized_email.strip().lower()
+    user = (
+        User.objects.filter(
+            email__iexact=normalized_email,
+            role=User.Role.ADMIN,
+            barbershop_id__isnull=False,
+        )
+        .select_related("barbershop")
+        .first()
+    )
+    if user is None:
+        return None
+    subscription = Subscription.objects.filter(
+        barbershop_id=user.barbershop_id
+    ).first()
+    if subscription is None or subscription.allows_access:
+        return None
+
+    now = timezone.now()
+    email_hash = regularization_email_hash(normalized_email)
+    with transaction.atomic():
+        RegularizationEmailRequest.objects.filter(
+            subscription=subscription,
+            email_hash=email_hash,
+            expires_at__lte=now,
+        ).delete()
+        request, _ = RegularizationEmailRequest.objects.get_or_create(
+            subscription=subscription,
+            email_hash=email_hash,
+            defaults={
+                "user": user,
+                "next_attempt_at": now,
+                "expires_at": now + REGULARIZATION_EMAIL_REQUEST_TTL,
+            },
+        )
+    return request
+
+
+def regularization_email_hash(normalized_email):
+    return hmac.new(
+        settings.SECRET_KEY.encode(),
+        normalized_email.encode(),
+        hashlib.sha256,
+    ).hexdigest()
 
 
 def regularization_subscription_from_token(token):

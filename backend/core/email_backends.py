@@ -6,7 +6,9 @@ from django.core.exceptions import ImproperlyConfigured
 from django.core.mail.backends.base import BaseEmailBackend
 
 
-BILLING_IDEMPOTENCY_KEY_PATTERN = re.compile(r"billing-notification-[1-9][0-9]*\Z")
+TRANSACTIONAL_IDEMPOTENCY_KEY_PATTERN = re.compile(
+    r"(?:billing-notification|regularization-request)-[1-9][0-9]*\Z"
+)
 MAX_IDEMPOTENCY_KEY_LENGTH = 256
 
 
@@ -15,7 +17,7 @@ def _resend_idempotency_header(message):
     if (
         not isinstance(value, str)
         or len(value) > MAX_IDEMPOTENCY_KEY_LENGTH
-        or not BILLING_IDEMPOTENCY_KEY_PATTERN.fullmatch(value)
+        or not TRANSACTIONAL_IDEMPOTENCY_KEY_PATTERN.fullmatch(value)
     ):
         return {}
     return {"Idempotency-Key": value}

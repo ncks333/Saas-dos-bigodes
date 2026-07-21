@@ -62,7 +62,9 @@ def test_resend_backend_propagates_valid_billing_idempotency_key(monkeypatch):
     )
 
     assert ResendEmailBackend().send_messages([message]) == 1
-    __import__("core.email_backends", fromlist=["requests"]).requests.post.assert_called_once_with(
+    __import__(
+        "core.email_backends", fromlist=["requests"]
+    ).requests.post.assert_called_once_with(
         "https://api.resend.com/emails",
         json={
             "from": "nao-responda@bigodes.local",
@@ -77,6 +79,36 @@ def test_resend_backend_propagates_valid_billing_idempotency_key(monkeypatch):
         timeout=10,
     )
 
+
+@override_settings(RESEND_API_KEY="resend-secret")
+def test_resend_backend_propagates_valid_regularization_idempotency_key(monkeypatch):
+    response = Mock()
+    monkeypatch.setattr("core.email_backends.requests.post", Mock(return_value=response))
+    message = EmailMultiAlternatives(
+        "Regularização",
+        "Use o link seguro.",
+        None,
+        ["admin@example.com"],
+        headers={"Idempotency-Key": "regularization-request-456"},
+    )
+
+    assert ResendEmailBackend().send_messages([message]) == 1
+    __import__(
+        "core.email_backends", fromlist=["requests"]
+    ).requests.post.assert_called_once_with(
+        "https://api.resend.com/emails",
+        json={
+            "from": "nao-responda@bigodes.local",
+            "to": ["admin@example.com"],
+            "subject": "Regularização",
+            "text": "Use o link seguro.",
+        },
+        headers={
+            "Authorization": "Bearer resend-secret",
+            "Idempotency-Key": "regularization-request-456",
+        },
+        timeout=10,
+    )
 
 @override_settings(RESEND_API_KEY="resend-secret")
 def test_resend_backend_ignores_invalid_or_non_billing_idempotency_key(monkeypatch):
