@@ -47,3 +47,11 @@ class SignupSerializer(serializers.Serializer):
         if not value:
             raise serializers.ValidationError("Aceite dos termos é obrigatório.")
         return value
+
+
+class RegularizationRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class RegularizationCheckoutSerializer(serializers.Serializer):
+    token = serializers.CharField(max_length=512, trim_whitespace=False)

@@ -1,7 +1,12 @@
 import hmac
 from collections.abc import Mapping
+from urllib.parse import urlencode
 
 from django.conf import settings
+from django.core.mail import send_mail
+from django.core.signing import BadSignature
+from django.utils.decorators import method_decorator
+from django_ratelimit.decorators import ratelimit
 from rest_framework import serializers, status
 from rest_framework.exceptions import APIException, NotFound
 from rest_framework.permissions import AllowAny
@@ -10,15 +15,29 @@ from rest_framework.views import APIView
 
 from core.security.turnstile import verify_turnstile
 
+from apps.accounts.models import User
+
 from .models import BillingWebhookEvent, Subscription, SubscriptionPlan
 from .providers.asaas import AsaasCheckoutError
-from .serializers import PublicPlanSerializer, SignupSerializer
-from .services import provision_signup, sanitize_asaas_webhook_payload
+from .serializers import (
+    PublicPlanSerializer,
+    RegularizationCheckoutSerializer,
+    RegularizationRequestSerializer,
+    SignupSerializer,
+)
+from .services import (
+    make_regularization_token,
+    provision_regularization_checkout,
+    provision_signup,
+    regularization_subscription_from_token,
+    sanitize_asaas_webhook_payload,
+)
 from .tasks import (
     prepare_billing_webhook_dispatch,
     process_billing_webhook,
     release_billing_webhook_dispatch,
 )
+from .throttles import RegularizationCheckoutThrottle, RegularizationRequestThrottle
 
 
 class ProviderUnavailable(APIException):
@@ -69,6 +88,85 @@ class SignupView(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+@method_decorator(ratelimit(key="ip", rate="5/h", method="POST", block=True), name="dispatch")
+class RegularizationRequestView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [RegularizationRequestThrottle]
+
+    def post(self, request):
+        serializer = RegularizationRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = (
+            User.objects.filter(
+                email__iexact=serializer.validated_data["email"],
+                role=User.Role.ADMIN,
+            )
+            .select_related("barbershop")
+            .first()
+        )
+        if user is not None and user.barbershop_id:
+            subscription = Subscription.objects.filter(
+                barbershop_id=user.barbershop_id
+            ).first()
+            if subscription is not None and not subscription.allows_access:
+                token = make_regularization_token(subscription)
+                regularization_url = (
+                    f"{settings.FRONTEND_URL.rstrip('/')}/regularizar?"
+                    f"{urlencode({'token': token})}"
+                )
+                send_mail(
+                    "Regularização de assinatura",
+                    "Use este link para regularizar sua assinatura:\n\n"
+                    f"{regularization_url}",
+                    None,
+                    [user.email],
+                )
+        return Response(
+            {
+                "message": (
+                    "Se a conta precisar de regularização, enviaremos as instruções."
+                )
+            }
+        )
+
+
+@method_decorator(ratelimit(key="ip", rate="5/h", method="POST", block=True), name="dispatch")
+class RegularizationCheckoutView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [RegularizationCheckoutThrottle]
+
+    def post(self, request):
+        serializer = RegularizationCheckoutSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            subscription = regularization_subscription_from_token(
+                serializer.validated_data["token"]
+            )
+        except BadSignature:
+            raise serializers.ValidationError(
+                {"token": "Token inválido ou expirado."}
+            ) from None
+        if subscription is None or subscription.allows_access:
+            raise serializers.ValidationError(
+                {"token": "Token inválido ou expirado."}
+            )
+        try:
+            checkout = provision_regularization_checkout(subscription)
+        except AsaasCheckoutError as exc:
+            raise ProviderUnavailable() from exc
+        except ValueError:
+            raise serializers.ValidationError(
+                {"token": "Token inválido ou expirado."}
+            ) from None
+        if checkout is None:
+            raise serializers.ValidationError(
+                {"token": "Token inválido ou expirado."}
+            )
+        return Response({"checkout_url": checkout.url})
 
 
 class AsaasWebhookView(APIView):

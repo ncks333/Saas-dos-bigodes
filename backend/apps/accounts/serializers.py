@@ -1,6 +1,9 @@
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
+from rest_framework.exceptions import PermissionDenied
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+
+from apps.billing.access import user_has_subscription_access
 
 from .models import User
 
@@ -17,6 +20,13 @@ class LoginSerializer(TokenObtainPairSerializer):
         data = super().validate(attrs)
         if not self.user.barbershop_id:
             raise serializers.ValidationError("Usuário sem barbearia associada.")
+        if not user_has_subscription_access(self.user):
+            raise PermissionDenied(
+                {
+                    "code": "subscription_required",
+                    "detail": "Assinatura precisa ser regularizada.",
+                }
+            )
         data["user"] = {"id": self.user.id, "name": self.user.get_full_name(), "role": self.user.role}
         return data
 

@@ -2,6 +2,7 @@ import logging
 from collections.abc import Mapping
 from datetime import UTC, time, timedelta
 
+from django.core.signing import TimestampSigner
 from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -11,9 +12,16 @@ from apps.audit import services as audit_services
 from apps.barbershops.models import Barbershop, OperatingHour
 
 from .models import Subscription, SubscriptionPaymentCycle
-from .providers.asaas import cancel_checkout, create_recurring_checkout
+from .providers.asaas import (
+    cancel_checkout,
+    create_recurring_checkout,
+    create_regularization_checkout,
+)
 
 logger = logging.getLogger(__name__)
+
+REGULARIZATION_TOKEN_SALT = "billing-regularization"
+REGULARIZATION_TOKEN_MAX_AGE = 60 * 60
 
 SAFE_WEBHOOK_FIELDS = {
     "checkout": {
@@ -380,3 +388,46 @@ def provision_signup(data, plan, *, request=None):
             except Exception:
                 logger.warning("Checkout compensation failed after local signup error")
         raise
+
+
+def make_regularization_token(subscription):
+    return TimestampSigner(salt=REGULARIZATION_TOKEN_SALT).sign(
+        str(subscription.external_reference)
+    )
+
+
+def regularization_subscription_from_token(token):
+    external_reference = TimestampSigner(salt=REGULARIZATION_TOKEN_SALT).unsign(
+        token,
+        max_age=REGULARIZATION_TOKEN_MAX_AGE,
+    )
+    return (
+        Subscription.objects.select_related("barbershop", "plan")
+        .filter(external_reference=external_reference)
+        .first()
+    )
+
+
+def provision_regularization_checkout(subscription):
+    with transaction.atomic():
+        subscription = (
+            Subscription.objects.select_for_update()
+            .select_related("barbershop", "plan")
+            .get(pk=subscription.pk)
+        )
+        if subscription.allows_access:
+            return None
+        admin = (
+            User.objects.filter(
+                barbershop_id=subscription.barbershop_id,
+                role=User.Role.ADMIN,
+            )
+            .order_by("id")
+            .first()
+        )
+        if admin is None:
+            raise ValueError("Assinatura sem administrador para regularização.")
+        checkout = create_regularization_checkout(subscription, admin)
+        subscription.provider_checkout_id = checkout.id
+        subscription.save(update_fields=["provider_checkout_id", "updated_at"])
+    return checkout
