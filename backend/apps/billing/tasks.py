@@ -221,6 +221,42 @@ def _billing_idempotency_key(notification_id):
     return key
 
 
+def _billing_email_snapshot(notification_id, claim_token):
+    with transaction.atomic():
+        notification = BillingNotificationLog.objects.select_for_update().get(
+            pk=notification_id
+        )
+        if (
+            notification.status != "SENDING"
+            or notification.claim_token != claim_token
+        ):
+            return None
+        if notification.email_snapshot is None:
+            subscription = Subscription.objects.select_related("barbershop", "plan").get(
+                pk=notification.subscription_id
+            )
+            recipients = list(
+                User.objects.filter(
+                    barbershop_id=subscription.barbershop_id,
+                    role=User.Role.ADMIN,
+                )
+                .exclude(email="")
+                .order_by("id")
+                .values_list("email", flat=True)
+            )
+            if not recipients:
+                raise RuntimeError("Billing subscription has no admin email recipient")
+            subject, body = _billing_email_content(subscription, notification.kind)
+            notification.email_snapshot = {
+                "to": recipients,
+                "from": settings.DEFAULT_FROM_EMAIL,
+                "subject": subject,
+                "body": body,
+            }
+            notification.save(update_fields=["email_snapshot", "updated_at"])
+        return notification.email_snapshot
+
+
 def _notification_log(subscription_id, kind):
     notification = BillingNotificationLog.objects.filter(
         subscription_id=subscription_id,
@@ -266,26 +302,14 @@ def send_billing_email(subscription_id, kind):
     if not claimed:
         return False
     try:
-        subscription = Subscription.objects.select_related("barbershop", "plan").get(
-            pk=subscription_id
-        )
-        recipients = list(
-            User.objects.filter(
-                barbershop_id=subscription.barbershop_id,
-                role=User.Role.ADMIN,
-            )
-            .exclude(email="")
-            .values_list("email", flat=True)
-            .distinct()
-        )
-        if not recipients:
-            raise RuntimeError("Billing subscription has no admin email recipient")
-        subject, body = _billing_email_content(subscription, kind)
+        snapshot = _billing_email_snapshot(notification.pk, claim_token)
+        if snapshot is None:
+            return False
         message = EmailMultiAlternatives(
-            subject,
-            body,
-            settings.DEFAULT_FROM_EMAIL,
-            recipients,
+            snapshot["subject"],
+            snapshot["body"],
+            snapshot["from"],
+            snapshot["to"],
             headers={"Idempotency-Key": _billing_idempotency_key(notification.pk)},
         )
         if message.send(fail_silently=False) != 1:

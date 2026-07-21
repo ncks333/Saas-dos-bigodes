@@ -1,8 +1,12 @@
 from datetime import timedelta
+from decimal import Decimal
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
+import requests
 from django.core import mail
+from django.test import override_settings
 from django.utils import timezone
 
 from apps.billing.models import (
@@ -99,6 +103,64 @@ def test_billing_retry_reuses_stable_resend_idempotency_key(
         f"billing-notification-{notification.id}",
         f"billing-notification-{notification.id}",
     ]
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    EMAIL_BACKEND="core.email_backends.ResendEmailBackend",
+    RESEND_API_KEY="resend-test-key",
+    DEFAULT_FROM_EMAIL="billing@example.com",
+)
+def test_billing_recovery_reuses_immutable_resend_payload_snapshot(
+    subscription, user, monkeypatch
+):
+    payloads = []
+
+    def fail_then_send(url, *, json, headers, timeout):
+        payloads.append(
+            {
+                "url": url,
+                "json": {**json, "to": list(json["to"])},
+                "headers": dict(headers),
+                "timeout": timeout,
+            }
+        )
+        if len(payloads) == 1:
+            raise requests.Timeout("Ambiguous Resend result")
+        return Mock()
+
+    monkeypatch.setattr(
+        "core.email_backends.requests.post",
+        fail_then_send,
+    )
+    with pytest.raises(requests.Timeout, match="Ambiguous Resend result"):
+        send_billing_email(subscription.id, "PAYMENT_FAILED")
+
+    notification = BillingNotificationLog.objects.get(
+        subscription=subscription,
+        kind="PAYMENT_FAILED",
+    )
+    original_snapshot = notification.email_snapshot
+    user.email = "changed-admin@example.com"
+    user.save(update_fields=["email"])
+    subscription.plan.name = "Plano alterado"
+    subscription.plan.amount = Decimal("199.90")
+    subscription.plan.save(update_fields=["name", "amount", "updated_at"])
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.trial_ends_at = timezone.now() + timedelta(days=90)
+    subscription.save(update_fields=["status", "trial_ends_at", "updated_at"])
+
+    with override_settings(DEFAULT_FROM_EMAIL="changed-sender@example.com"):
+        assert recover_billing_notification_emails.run() == 1
+
+    notification.refresh_from_db()
+    assert notification.email_snapshot == original_snapshot
+    assert payloads == [payloads[0], payloads[0]]
+    assert payloads[0]["json"]["to"] == ["admin@example.com"]
+    assert payloads[0]["json"]["from"] == "billing@example.com"
+    assert payloads[0]["headers"]["Idempotency-Key"] == (
+        f"billing-notification-{notification.id}"
+    )
 
 
 @pytest.mark.django_db(transaction=True)

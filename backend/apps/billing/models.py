@@ -121,6 +121,7 @@ class BillingNotificationLog(TimestampedModel):
     kind = models.CharField(max_length=50)
     status = models.CharField(max_length=20, default="PENDING")
     claim_token = models.UUIDField(null=True, blank=True, editable=False)
+    email_snapshot = models.JSONField(null=True, blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
