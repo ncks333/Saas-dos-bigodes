@@ -3,8 +3,10 @@
 Use quando assinatura bloqueada ficar em `CREATING` ou `RECONCILIATION_REQUIRED`.
 Nunca execute novo checkout antes de consultar Asaas pelo `externalReference` da assinatura e confirmar checkout ativo.
 
-1. Localize assinatura e `external_reference` no Django admin ou shell.
-2. Consulte Asaas; confirme manualmente checkout ativo pertencente àquele `externalReference`.
+`CREATING` só pode ser reconciliado após 5 minutos desde `claim_started_at`, janela acima do timeout de 10 segundos do provedor. Não existe `--force`: claim recente pode ainda concluir checkout e o comando a rejeita.
+
+1. Localize assinatura e `regularization_checkout_reference` no Django admin ou shell. Para signup inicial, use `external_reference`.
+2. Consulte Asaas; confirme manualmente checkout ativo pertencente àquela referência de tentativa.
 3. Se existir, anexe ID e URL verificados:
 
 ```bash

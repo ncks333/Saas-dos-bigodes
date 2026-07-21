@@ -31,6 +31,7 @@ REGULARIZATION_TOKEN_SALT = "billing-regularization"
 REGULARIZATION_TOKEN_MAX_AGE = 60 * 60
 REGULARIZATION_CHECKOUT_WAIT_SECONDS = 12
 REGULARIZATION_CHECKOUT_POLL_SECONDS = 0.05
+REGULARIZATION_CLAIM_STALE_AFTER = timedelta(minutes=5)
 
 SAFE_WEBHOOK_FIELDS = {
     "checkout": {
@@ -135,10 +136,25 @@ def activate_checkout_from_webhook(event):
     )
     checkout_id = _required_provider_value(event, "checkout", "id")
     provider_subscription_id = _required_provider_value(event, "subscription", "id")
-    subscription = Subscription.objects.select_for_update().get(
-        external_reference=external_reference,
-        provider=Subscription.Provider.ASAAS,
+    subscription = (
+        Subscription.objects.select_for_update()
+        .filter(
+            external_reference=external_reference,
+            provider=Subscription.Provider.ASAAS,
+        )
+        .first()
     )
+    if subscription is None:
+        subscription = (
+            Subscription.objects.select_for_update()
+            .filter(
+                regularization_checkout_reference=external_reference,
+                provider=Subscription.Provider.ASAAS,
+            )
+            .first()
+        )
+    if subscription is None:
+        return
     event_at = _provider_event_at(event)
     if _is_stale_provider_event(subscription, event_at):
         return
@@ -167,7 +183,11 @@ def activate_checkout_from_webhook(event):
             Subscription.Status.SUSPENDED,
             Subscription.Status.CANCELED,
         }
-        or not _matches_regularization_checkout(subscription, checkout_id)
+        or not _matches_regularization_checkout(
+            subscription,
+            checkout_id,
+            external_reference,
+        )
     ):
         return
 
@@ -177,6 +197,7 @@ def activate_checkout_from_webhook(event):
         Subscription.RegularizationCheckoutState.PAID
     )
     subscription.regularization_checkout_claim = None
+    subscription.regularization_checkout_claim_started_at = None
     subscription.regularization_checkout_id = checkout_id
     subscription.regularization_checkout_error = ""
     subscription.status = Subscription.Status.ACTIVE
@@ -191,6 +212,7 @@ def activate_checkout_from_webhook(event):
             "provider_subscription_id",
             "regularization_checkout_state",
             "regularization_checkout_claim",
+            "regularization_checkout_claim_started_at",
             "regularization_checkout_id",
             "regularization_checkout_error",
             "status",
@@ -511,16 +533,20 @@ def _claim_regularization_checkout(subscription_id):
             Subscription.RegularizationCheckoutState.CREATING
         )
         subscription.regularization_checkout_claim = claim
+        subscription.regularization_checkout_claim_started_at = timezone.now()
         subscription.regularization_checkout_id = ""
         subscription.regularization_checkout_url = ""
         subscription.regularization_checkout_error = ""
+        subscription.regularization_checkout_reference = uuid4()
         subscription.save(
             update_fields=[
                 "regularization_checkout_state",
                 "regularization_checkout_claim",
+                "regularization_checkout_claim_started_at",
                 "regularization_checkout_id",
                 "regularization_checkout_url",
                 "regularization_checkout_error",
+                "regularization_checkout_reference",
                 "updated_at",
             ]
         )
@@ -541,6 +567,7 @@ def _persist_regularization_checkout(subscription_id, claim, checkout):
             Subscription.RegularizationCheckoutState.CREATED
         )
         subscription.regularization_checkout_claim = None
+        subscription.regularization_checkout_claim_started_at = None
         subscription.regularization_checkout_id = checkout.id
         subscription.regularization_checkout_url = checkout.url
         subscription.regularization_checkout_error = ""
@@ -549,6 +576,7 @@ def _persist_regularization_checkout(subscription_id, claim, checkout):
             update_fields=[
                 "regularization_checkout_state",
                 "regularization_checkout_claim",
+                "regularization_checkout_claim_started_at",
                 "regularization_checkout_id",
                 "regularization_checkout_url",
                 "regularization_checkout_error",
@@ -571,12 +599,16 @@ def _release_regularization_checkout_claim(subscription_id, claim):
             Subscription.RegularizationCheckoutState.READY
         )
         subscription.regularization_checkout_claim = None
+        subscription.regularization_checkout_claim_started_at = None
         subscription.regularization_checkout_error = ""
+        subscription.regularization_checkout_reference = None
         subscription.save(
             update_fields=[
                 "regularization_checkout_state",
                 "regularization_checkout_claim",
+                "regularization_checkout_claim_started_at",
                 "regularization_checkout_error",
+                "regularization_checkout_reference",
                 "updated_at",
             ]
         )
@@ -608,7 +640,9 @@ def _wait_for_regularization_checkout(subscription_id, claim):
     raise AsaasCheckoutError("Checkout de regularização ainda está sendo criado")
 
 
-def _matches_regularization_checkout(subscription, checkout_id):
+def _matches_regularization_checkout(subscription, checkout_id, external_reference):
+    if str(subscription.regularization_checkout_reference) != external_reference:
+        return False
     if (
         subscription.regularization_checkout_state
         == Subscription.RegularizationCheckoutState.CREATED
@@ -671,6 +705,16 @@ def reconcile_regularization_checkout(
             Subscription.RegularizationCheckoutState.RECONCILIATION_REQUIRED,
         }:
             raise ValueError("Assinatura não exige reconciliação de checkout.")
+        if (
+            subscription.regularization_checkout_state
+            == Subscription.RegularizationCheckoutState.CREATING
+            and (
+                subscription.regularization_checkout_claim_started_at is None
+                or subscription.regularization_checkout_claim_started_at
+                > timezone.now() - REGULARIZATION_CLAIM_STALE_AFTER
+            )
+        ):
+            raise ValueError("Checkout em criação recente; aguarde reconciliação segura.")
         if attach_checkout:
             subscription.regularization_checkout_state = (
                 Subscription.RegularizationCheckoutState.CREATED
@@ -689,14 +733,19 @@ def reconcile_regularization_checkout(
             action = "BILLING_REGULARIZATION_CLAIM_RESET"
             metadata = {"confirmed_no_active_checkout": True}
         subscription.regularization_checkout_claim = None
+        subscription.regularization_checkout_claim_started_at = None
         subscription.regularization_checkout_error = ""
+        if not attach_checkout:
+            subscription.regularization_checkout_reference = None
         subscription.save(
             update_fields=[
                 "regularization_checkout_state",
                 "regularization_checkout_claim",
+                "regularization_checkout_claim_started_at",
                 "regularization_checkout_id",
                 "regularization_checkout_url",
                 "regularization_checkout_error",
+                "regularization_checkout_reference",
                 "provider_checkout_id",
                 "updated_at",
             ]

@@ -155,11 +155,13 @@ def test_regularization_checkout_paid_reactivates_blocked_subscription_once(
     client, subscription, user, starting_status
 ):
     previous_provider_subscription_id = "sub_old"
+    attempt_reference = uuid.uuid4()
     subscription.status = starting_status
     subscription.provider_subscription_id = previous_provider_subscription_id
     subscription.regularization_checkout_id = "chk_regularization"
     subscription.regularization_checkout_url = "https://asaas.test/regularization"
     subscription.regularization_checkout_state = "CREATED"
+    subscription.regularization_checkout_reference = attempt_reference
     subscription.suspended_at = timezone.now()
     subscription.suspension_reason = "GRACE_EXPIRED"
     subscription.canceled_at = timezone.now()
@@ -170,6 +172,7 @@ def test_regularization_checkout_paid_reactivates_blocked_subscription_once(
             "regularization_checkout_id",
             "regularization_checkout_url",
             "regularization_checkout_state",
+            "regularization_checkout_reference",
             "suspended_at",
             "suspension_reason",
             "canceled_at",
@@ -183,7 +186,7 @@ def test_regularization_checkout_paid_reactivates_blocked_subscription_once(
         "event": "CHECKOUT_PAID",
         "checkout": {
             "id": "chk_regularization",
-            "externalReference": str(subscription.external_reference),
+            "externalReference": str(attempt_reference),
         },
         "subscription": {"id": "sub_regularized"},
     }
@@ -223,13 +226,16 @@ def test_checkout_paid_recovers_matching_uncertain_regularization_checkout(
     client, subscription, user
 ):
     subscription.status = Subscription.Status.SUSPENDED
+    attempt_reference = uuid.uuid4()
     subscription.regularization_checkout_state = "RECONCILIATION_REQUIRED"
     subscription.regularization_checkout_claim = uuid.uuid4()
+    subscription.regularization_checkout_reference = attempt_reference
     subscription.save(
         update_fields=[
             "status",
             "regularization_checkout_state",
             "regularization_checkout_claim",
+            "regularization_checkout_reference",
             "updated_at",
         ]
     )
@@ -243,7 +249,7 @@ def test_checkout_paid_recovers_matching_uncertain_regularization_checkout(
             "event": "CHECKOUT_PAID",
             "checkout": {
                 "id": "chk_recovered",
-                "externalReference": str(subscription.external_reference),
+                "externalReference": str(attempt_reference),
             },
             "subscription": {"id": "sub_recovered"},
         },
@@ -264,14 +270,17 @@ def test_unrelated_checkout_cannot_reactivate_persisted_regularization_checkout(
     client, subscription, user
 ):
     subscription.status = Subscription.Status.SUSPENDED
+    attempt_reference = uuid.uuid4()
     subscription.regularization_checkout_state = "CREATED"
     subscription.regularization_checkout_id = "chk_expected"
+    subscription.regularization_checkout_reference = attempt_reference
     subscription.regularization_checkout_url = "https://asaas.test/expected"
     subscription.save(
         update_fields=[
             "status",
             "regularization_checkout_state",
             "regularization_checkout_id",
+            "regularization_checkout_reference",
             "regularization_checkout_url",
             "updated_at",
         ]
@@ -301,25 +310,86 @@ def test_unrelated_checkout_cannot_reactivate_persisted_regularization_checkout(
 
 
 @pytest.mark.django_db(transaction=True)
+def test_old_attempt_checkout_cannot_reactivate_new_uncertain_attempt(
+    client, subscription, user
+):
+    old_attempt_reference = uuid.uuid4()
+    current_attempt_reference = uuid.uuid4()
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.regularization_checkout_state = "RECONCILIATION_REQUIRED"
+    subscription.regularization_checkout_claim = uuid.uuid4()
+    subscription.regularization_checkout_reference = current_attempt_reference
+    subscription.save(
+        update_fields=[
+            "status",
+            "regularization_checkout_state",
+            "regularization_checkout_claim",
+            "regularization_checkout_reference",
+            "updated_at",
+        ]
+    )
+    user.is_active = False
+    user.save(update_fields=["is_active"])
+
+    response = post_webhook(
+        client,
+        {
+            "id": "evt_old_regularization_attempt",
+            "event": "CHECKOUT_PAID",
+            "checkout": {
+                "id": "chk_old",
+                "externalReference": str(old_attempt_reference),
+            },
+            "subscription": {"id": "sub_old"},
+        },
+    )
+
+    subscription.refresh_from_db()
+    user.refresh_from_db()
+    event = BillingWebhookEvent.objects.get(
+        provider_event_id="evt_old_regularization_attempt"
+    )
+    assert response.status_code == 202
+    assert subscription.status == Subscription.Status.SUSPENDED
+    assert subscription.regularization_checkout_state == "RECONCILIATION_REQUIRED"
+    assert user.is_active is False
+    assert event.processed_at is not None
+
+
+@pytest.mark.django_db(transaction=True)
 def test_distinct_regularization_reactivations_send_one_email_per_provider_event(
     client, subscription, user
 ):
     subscription.status = Subscription.Status.SUSPENDED
+    first_attempt_reference = uuid.uuid4()
+    second_attempt_reference = uuid.uuid4()
     subscription.regularization_checkout_state = "CREATED"
     subscription.regularization_checkout_id = "chk_reactivate_one"
+    subscription.regularization_checkout_reference = first_attempt_reference
     subscription.regularization_checkout_url = "https://asaas.test/one"
     subscription.save(
         update_fields=[
             "status",
             "regularization_checkout_state",
             "regularization_checkout_id",
+            "regularization_checkout_reference",
             "regularization_checkout_url",
             "updated_at",
         ]
     )
-    for event_id, checkout_id, provider_subscription_id in (
-        ("evt_reactivate_one", "chk_reactivate_one", "sub_reactivate_one"),
-        ("evt_reactivate_two", "chk_reactivate_two", "sub_reactivate_two"),
+    for event_id, checkout_id, provider_subscription_id, attempt_reference in (
+        (
+            "evt_reactivate_one",
+            "chk_reactivate_one",
+            "sub_reactivate_one",
+            first_attempt_reference,
+        ),
+        (
+            "evt_reactivate_two",
+            "chk_reactivate_two",
+            "sub_reactivate_two",
+            second_attempt_reference,
+        ),
     ):
         response = post_webhook(
             client,
@@ -328,7 +398,7 @@ def test_distinct_regularization_reactivations_send_one_email_per_provider_event
                 "event": "CHECKOUT_PAID",
                 "checkout": {
                     "id": checkout_id,
-                    "externalReference": str(subscription.external_reference),
+                    "externalReference": str(attempt_reference),
                 },
                 "subscription": {"id": provider_subscription_id},
             },
@@ -339,12 +409,14 @@ def test_distinct_regularization_reactivations_send_one_email_per_provider_event
             subscription.status = Subscription.Status.SUSPENDED
             subscription.regularization_checkout_state = "CREATED"
             subscription.regularization_checkout_id = "chk_reactivate_two"
+            subscription.regularization_checkout_reference = second_attempt_reference
             subscription.regularization_checkout_url = "https://asaas.test/two"
             subscription.save(
                 update_fields=[
                     "status",
                     "regularization_checkout_state",
                     "regularization_checkout_id",
+                    "regularization_checkout_reference",
                     "regularization_checkout_url",
                     "updated_at",
                 ]

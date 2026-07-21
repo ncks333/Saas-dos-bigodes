@@ -52,9 +52,16 @@ class Subscription(TimestampedModel):
         default=RegularizationCheckoutState.READY,
     )
     regularization_checkout_claim = models.UUIDField(null=True, blank=True, editable=False)
+    regularization_checkout_claim_started_at = models.DateTimeField(null=True, blank=True)
     regularization_checkout_id = models.CharField(max_length=100, blank=True)
     regularization_checkout_url = models.URLField(max_length=500, blank=True)
     regularization_checkout_error = models.CharField(max_length=100, blank=True)
+    regularization_checkout_reference = models.UUIDField(
+        null=True,
+        blank=True,
+        unique=True,
+        editable=False,
+    )
     external_reference = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     trial_days = models.PositiveSmallIntegerField(default=30)
     trial_ends_at = models.DateTimeField(null=True, blank=True)

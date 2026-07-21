@@ -118,8 +118,10 @@ def _event_subscription(event):
         if not external_reference:
             return None
         return Subscription.objects.filter(
-            external_reference=external_reference,
             provider=Subscription.Provider.ASAAS,
+        ).filter(
+            Q(external_reference=external_reference)
+            | Q(regularization_checkout_reference=external_reference)
         ).first()
     if (
         event.event_type

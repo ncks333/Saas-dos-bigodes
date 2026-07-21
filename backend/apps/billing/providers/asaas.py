@@ -23,12 +23,14 @@ class CheckoutResult:
     url: str
 
 
-def _create_checkout(subscription, user, next_due_date) -> CheckoutResult:
+def _create_checkout(
+    subscription, user, next_due_date, *, external_reference=None
+) -> CheckoutResult:
     payload = {
         "billingTypes": ["CREDIT_CARD"],
         "chargeTypes": ["RECURRENT"],
         "minutesToExpire": settings.ASAAS_CHECKOUT_EXPIRES_MINUTES,
-        "externalReference": str(subscription.external_reference),
+        "externalReference": str(external_reference or subscription.external_reference),
         "callback": {
             "successUrl": f"{settings.FRONTEND_URL.rstrip('/')}/checkout/concluido",
             "cancelUrl": f"{settings.FRONTEND_URL.rstrip('/')}/checkout/cancelado",
@@ -66,7 +68,7 @@ def _create_checkout(subscription, user, next_due_date) -> CheckoutResult:
         response.raise_for_status()
     except requests.HTTPError as exc:
         status_code = getattr(exc.response, "status_code", None)
-        if isinstance(status_code, int) and 400 <= status_code < 500:
+        if status_code == 400:
             raise AsaasCheckoutNotCreatedError(
                 "Checkout Asaas recusado antes da criação"
             ) from None
@@ -107,7 +109,15 @@ def create_recurring_checkout(subscription, user) -> CheckoutResult:
 
 
 def create_regularization_checkout(subscription, user) -> CheckoutResult:
-    return _create_checkout(subscription, user, timezone.now())
+    return _create_checkout(
+        subscription,
+        user,
+        timezone.now(),
+        external_reference=(
+            subscription.regularization_checkout_reference
+            or subscription.external_reference
+        ),
+    )
 
 
 def cancel_checkout(checkout_id: str) -> None:

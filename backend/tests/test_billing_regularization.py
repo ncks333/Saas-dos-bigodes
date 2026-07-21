@@ -1,3 +1,4 @@
+from datetime import timedelta
 from unittest.mock import patch
 from uuid import uuid4
 from urllib.parse import parse_qs, urlparse
@@ -5,7 +6,8 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from django.core.cache import cache
 from django.core import mail
-from django.core.management import call_command
+from django.core.management import CommandError, call_command
+from django.utils import timezone
 from django.core.signing import TimestampSigner
 
 from apps.accounts.models import User
@@ -228,6 +230,28 @@ def test_regularization_checkout_reuses_persisted_checkout_without_provider_retr
 
 
 @pytest.mark.django_db
+def test_regularization_checkout_uses_new_attempt_reference_for_provider_call(
+    subscription, user, monkeypatch
+):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.save(update_fields=["status", "updated_at"])
+    captured_references = []
+    monkeypatch.setattr(
+        "apps.billing.services.create_regularization_checkout",
+        lambda claimed_subscription, _user: captured_references.append(
+            claimed_subscription.regularization_checkout_reference
+        )
+        or CheckoutResult(id="chk_attempt", url="https://asaas.test/attempt"),
+    )
+
+    provision_regularization_checkout(subscription)
+
+    subscription.refresh_from_db()
+    assert captured_references == [subscription.regularization_checkout_reference]
+    assert subscription.regularization_checkout_reference != subscription.external_reference
+
+
+@pytest.mark.django_db
 def test_regularization_checkout_waits_for_concurrent_claim_without_provider_retry(
     subscription, monkeypatch
 ):
@@ -395,11 +419,15 @@ def test_reconciliation_command_attaches_verified_checkout(subscription):
     subscription.status = Subscription.Status.SUSPENDED
     subscription.regularization_checkout_state = "CREATING"
     subscription.regularization_checkout_claim = uuid4()
+    subscription.regularization_checkout_claim_started_at = timezone.now() - timedelta(
+        minutes=6
+    )
     subscription.save(
         update_fields=[
             "status",
             "regularization_checkout_state",
             "regularization_checkout_claim",
+            "regularization_checkout_claim_started_at",
             "updated_at",
         ]
     )
@@ -454,6 +482,71 @@ def test_reconciliation_command_resets_claim_only_with_explicit_confirmation(sub
         action="BILLING_REGULARIZATION_CLAIM_RESET",
         target_id=str(subscription.id),
     ).exists()
+
+
+@pytest.mark.django_db
+def test_reconciliation_command_rejects_fresh_creating_claim(subscription):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.regularization_checkout_state = "CREATING"
+    subscription.regularization_checkout_claim = uuid4()
+    subscription.regularization_checkout_claim_started_at = timezone.now()
+    subscription.save(
+        update_fields=[
+            "status",
+            "regularization_checkout_state",
+            "regularization_checkout_claim",
+            "regularization_checkout_claim_started_at",
+            "updated_at",
+        ]
+    )
+
+    with pytest.raises(CommandError, match="em criação recente"):
+        call_command(
+            "reconcile_regularization_checkout",
+            subscription_id=subscription.id,
+            reset_confirmed_no_active_checkout=True,
+        )
+
+    subscription.refresh_from_db()
+    assert subscription.regularization_checkout_state == "CREATING"
+
+
+@pytest.mark.django_db
+def test_fresh_claim_provider_completion_survives_reconciliation_rejection(
+    subscription, user
+):
+    from apps.billing.services import _persist_regularization_checkout
+
+    claim = uuid4()
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.regularization_checkout_state = "CREATING"
+    subscription.regularization_checkout_claim = claim
+    subscription.regularization_checkout_claim_started_at = timezone.now()
+    subscription.save(
+        update_fields=[
+            "status",
+            "regularization_checkout_state",
+            "regularization_checkout_claim",
+            "regularization_checkout_claim_started_at",
+            "updated_at",
+        ]
+    )
+
+    with pytest.raises(CommandError):
+        call_command(
+            "reconcile_regularization_checkout",
+            subscription_id=subscription.id,
+            reset_confirmed_no_active_checkout=True,
+        )
+    _persist_regularization_checkout(
+        subscription.id,
+        claim,
+        CheckoutResult(id="chk_live", url="https://asaas.test/live"),
+    )
+
+    subscription.refresh_from_db()
+    assert subscription.regularization_checkout_state == "CREATED"
+    assert subscription.regularization_checkout_id == "chk_live"
 
 
 @pytest.mark.django_db

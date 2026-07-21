@@ -1,5 +1,6 @@
 from datetime import timedelta
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 import requests
@@ -101,6 +102,11 @@ def test_regularization_checkout_uses_current_server_date(
 ):
     captured = {}
     now = timezone.now()
+    attempt_reference = uuid4()
+    subscription.regularization_checkout_reference = attempt_reference
+    subscription.save(
+        update_fields=["regularization_checkout_reference", "updated_at"]
+    )
 
     def fake_post(url, json, headers, timeout):
         captured["json"] = json
@@ -112,6 +118,7 @@ def test_regularization_checkout_uses_current_server_date(
     create_regularization_checkout(subscription, user)
 
     assert captured["json"]["subscription"]["nextDueDate"] == now.date().isoformat()
+    assert captured["json"]["externalReference"] == str(attempt_reference)
 
 
 @pytest.mark.django_db
@@ -168,10 +175,10 @@ def test_checkout_timeout_has_unknown_creation_outcome(monkeypatch, subscription
 
 @pytest.mark.django_db
 @override_settings(**ASAAS_SETTINGS)
-def test_checkout_validation_failure_is_definitely_not_created(
+def test_checkout_400_validation_failure_is_definitely_not_created(
     monkeypatch, subscription, user
 ):
-    response = type("Response", (), {"status_code": 422})()
+    response = type("Response", (), {"status_code": 400})()
     response.raise_for_status = lambda: (_ for _ in ()).throw(
         requests.HTTPError(response=response)
     )
@@ -181,6 +188,25 @@ def test_checkout_validation_failure_is_definitely_not_created(
     )
 
     with pytest.raises(AsaasCheckoutNotCreatedError):
+        create_regularization_checkout(subscription, user)
+
+
+@pytest.mark.django_db
+@override_settings(**ASAAS_SETTINGS)
+@pytest.mark.parametrize("status_code", [409, 422, 429])
+def test_checkout_ambiguous_client_failures_have_unknown_creation_outcome(
+    monkeypatch, subscription, user, status_code
+):
+    response = type("Response", (), {"status_code": status_code})()
+    response.raise_for_status = lambda: (_ for _ in ()).throw(
+        requests.HTTPError(response=response)
+    )
+    monkeypatch.setattr(
+        "apps.billing.providers.asaas.requests.post",
+        lambda *_args, **_kwargs: response,
+    )
+
+    with pytest.raises(AsaasCheckoutOutcomeUnknownError):
         create_regularization_checkout(subscription, user)
 
 
