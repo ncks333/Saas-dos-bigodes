@@ -14,6 +14,11 @@
 - Health check de produção valida PostgreSQL e Redis sem expor detalhes internos.
 - PostHog sem autocapture, gravação de sessão ou persistência de identificadores.
 - Produção falha ao iniciar se chaves, Turnstile, e-mail ou WhatsApp estiverem ausentes.
+- Asaas autentica webhook por `ASAAS_WEBHOOK_TOKEN` independente, comparado em tempo constante no endpoint `/api/v1/billing/webhooks/asaas/`.
+- Checkout e cobrança são confirmados apenas por webhook Asaas autenticado; callback ou redirect de navegador não concede acesso.
+- Segredos Asaas, Resend, banco, Django e JWT ficam somente em secrets/variáveis protegidas Railway. Frontend recebe somente `VITE_*` públicos.
+- Eventos de cobrança e e-mails são idempotentes. E-mail nunca contém dados de cartão, payload do provedor, token, chave ou referência do provedor.
+- Regularização com resultado ambíguo falha fechada em `RECONCILIATION_REQUIRED`; recuperação exige reconciliação manual documentada, nunca nova cobrança automática.
 
 ## Antes de produção
 

@@ -47,7 +47,7 @@ Crie dois serviços a partir do mesmo repositório GitHub. Em todos, configure *
 | `barberhub-api` | `/backend/railway.toml` | `api.mrbarberhub.com.br` |
 | `barberhub-jobs` | `/backend/railway.jobs.toml` | nenhum |
 
-Importe em todos os serviços as variáveis de [`.env.production.example`](../backend/.env.production.example). Use variáveis compartilhadas da Railway para evitar divergências.
+Importe em todos os serviços as variáveis de [`.env.production.example`](../backend/.env.production.example). Na Railway, produção usa somente segredos/variáveis protegidas: não cole valores reais em Git, `.env`, logs, shell compartilhado ou documentação. Use variáveis compartilhadas da Railway para evitar divergências entre API e jobs.
 
 Gere duas chaves diferentes:
 
@@ -139,6 +139,52 @@ DEFAULT_FROM_EMAIL=M&R BarberHub <nao-responda@mail.seudominio.com>
 
 Cadastre `RESEND_API_KEY` como secret diretamente no painel Railway. Defina `FRONTEND_URL=https://app.seudominio.com` para os links de recuperação e mantenha `PASSWORD_RESET_TIMEOUT=3600` para expiração em uma hora. Nunca coloque a chave Resend no frontend ou no repositório.
 
+Antes do primeiro envio, verifique no Resend o domínio/subdomínio de envio e o endereço em `DEFAULT_FROM_EMAIL`; aguarde estado verificado. A chave deve ser restrita ao envio necessário. E-mails de cobrança são informativos e idempotentes: nunca inclua número de cartão, dados de pagamento, corpo de webhook, IDs do provedor, tokens ou chaves.
+
+## 5.1. Assinaturas Asaas e checkout hospedado
+
+### Configuração de ambiente
+
+Configure Asaas Sandbox primeiro. Cadastre uma API key de Sandbox restrita e estes valores como segredos Railway, nunca no frontend:
+
+```text
+ASAAS_API_URL=https://api-sandbox.asaas.com/v3
+ASAAS_CHECKOUT_BASE_URL=https://sandbox.asaas.com/checkoutSession/show
+ASAAS_API_KEY=defina-no-painel-railway
+ASAAS_WEBHOOK_TOKEN=gere-token-forte-independente
+ASAAS_CHECKOUT_EXPIRES_MINUTES=60
+FRONTEND_URL=https://app.seudominio.com
+```
+
+Para Asaas produção, troque somente URLs e API key pelos valores de produção; mantenha o mesmo contrato e HTTPS:
+
+```text
+ASAAS_API_URL=https://api.asaas.com/v3
+ASAAS_CHECKOUT_BASE_URL=https://www.asaas.com/checkoutSession/show
+ASAAS_API_KEY=defina-no-painel-railway
+ASAAS_WEBHOOK_TOKEN=gere-outro-token-forte-independente
+ASAAS_CHECKOUT_EXPIRES_MINUTES=60
+FRONTEND_URL=https://app.seudominio.com
+```
+
+Gere `ASAAS_WEBHOOK_TOKEN` de forma independente de `ASAAS_API_KEY`, por exemplo `openssl rand -hex 32`. Cadastre-o no webhook Asaas e no secret Railway; não reutilize token de API, JWT ou chave Django. O endpoint é exatamente `POST https://api.mrbarberhub.com.br/api/v1/billing/webhooks/asaas/`; o Asaas envia token no cabeçalho `asaas-access-token`.
+
+O cadastro chama `POST /api/v1/billing/signup/` e retorna somente URL de checkout hospedado. Checkout tem recorrência mensal, cartão tratado pelo Asaas e expira após `ASAAS_CHECKOUT_EXPIRES_MINUTES` (default `60`). O navegador pode voltar para `/checkout/concluido`, `/checkout/cancelado` ou `/checkout/expirado`, mas callback ou redirect não confirma pagamento e nunca libera acesso. Somente webhook autenticado confirma transição.
+
+### Eventos habilitados e ciclo de acesso
+
+Cadastre apenas estes eventos, pois são os únicos tratados pelo código:
+
+- `CHECKOUT_PAID`: checkout inicial pago ativa `TRIAL`; checkout de regularização pago reativa assinatura restrita.
+- `PAYMENT_CONFIRMED` e `PAYMENT_RECEIVED`: confirmam pagamento e mantêm/reativam `ACTIVE`.
+- `PAYMENT_OVERDUE` e `PAYMENT_REPROVED_BY_RISK_ANALYSIS`: iniciam `GRACE` de 7 dias. Eventos duplicados para mesmo pagamento não estendem prazo.
+- `PAYMENT_CHARGEBACK_REQUESTED` e `PAYMENT_CHARGEBACK_DISPUTE`: suspendem imediatamente por chargeback.
+- `SUBSCRIPTION_INACTIVATED` e `SUBSCRIPTION_DELETED`: cancelam assinatura.
+
+O trial padrão é 30 dias. Para piloto de 60 dias por assinatura, vincule antes do checkout um plano piloto exclusivo com `trial_days=60`; o webhook lê `subscription.plan.trial_days`. Não altere o plano comum depois de o cliente entrar no trial. O sweep horário envia ciclo e-mail-primeiro: avisos de trial em 7, 3 e 1 dia, cobrança não confirmada, suspensão, reativação e cancelamento. Ao vencer `GRACE`, assinatura fica `SUSPENDED`; usuário não recebe JWT, mas pode pedir link de regularização por e-mail e concluir checkout hospedado.
+
+O processamento é idempotente para eventos e e-mails. Falhas ambíguas de criação de checkout de regularização entram em `CREATING` ou `RECONCILIATION_REQUIRED`; não há recuperação automática. Siga a [runbook de reconciliação](runbooks/billing-regularization-reconciliation.md): confirme checkout no Asaas e execute reconciliação manual fail-closed antes de criar outro checkout.
+
 ## 6. Vercel
 
 1. Importe o mesmo repositório GitHub.
@@ -158,6 +204,8 @@ Cadastre também `VITE_MR_SOLUTIONS_WHATSAPP_URL` com a URL HTTPS pública `wa.m
 5. Vincule `app.seudominio.com`. Depois, atualize o widget Turnstile para aceitar somente esse hostname.
 
 O PostHog está configurado sem autocapture, gravação de sessão ou persistência em cookies/localStorage. Não envie nomes, telefones ou conteúdo de formulários como eventos.
+
+Vercel recebe somente valores públicos `VITE_*`. Nunca cadastre `ASAAS_API_KEY`, `ASAAS_WEBHOOK_TOKEN`, `RESEND_API_KEY`, `DJANGO_SECRET_KEY`, `JWT_SIGNING_KEY` ou `DATABASE_URL` no ambiente frontend; esses segredos existem somente na Railway.
 
 ## 7. Primeiro administrador
 
@@ -185,6 +233,13 @@ Após o sucesso, remova imediatamente `INITIAL_ADMIN_PASSWORD` das variáveis Ra
 - Supabase possui backup habilitado e alertas de uso configurados.
 - Upstash, Railway, Vercel e PostHog possuem limites de gasto/alertas.
 - Cloudflare está em SSL/TLS **Full (strict)** e HTTPS obrigatório.
+- Asaas Sandbox: `GET /api/v1/billing/plans/current/` retorna plano; cadastro por `POST /api/v1/billing/signup/` abre somente checkout hospedado; callback do navegador não altera acesso.
+- Webhook Sandbox autenticado chega em `/api/v1/billing/webhooks/asaas/`; `CHECKOUT_PAID` ativa trial de 30 dias e duplicata não duplica transição/e-mail.
+- Piloto de 60 dias usa plano piloto vinculado à assinatura, não alteração manual de pagamento.
+- Simule `PAYMENT_OVERDUE`, confirme `GRACE` de 7 dias estável, depois regularize apenas por e-mail e webhook; simule chargeback, inativação e deleção em Sandbox.
+- Verifique domínio/remetente Resend e receba e-mail de ciclo sem cartão, payload ou referência do provedor.
+- Após smoke Sandbox, cancele/expire checkout de teste no painel Asaas, confirme que não há assinatura/pagamento ativo e remova usuário/tenant de teste apenas em ambiente não produtivo. Não apague dados de produção para limpeza.
+- Antes de liberar produção, execute gates: `cd backend && pytest`; `cd backend && ruff check .`; `cd backend && python manage.py makemigrations --check --dry-run`; `cd frontend && npm run test:config`; `cd frontend && VITE_API_URL=<API HTTPS> VITE_MR_SOLUTIONS_WHATSAPP_URL=<URL HTTPS wa.me aprovada> npm run build`; `cd frontend && npm run lint`; `cd frontend && CHOKIDAR_USEPOLLING=true npm run test:e2e`.
 
 ## 8.1. Smoke test de desempenho antes da demonstração
 

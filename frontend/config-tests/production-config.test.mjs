@@ -17,6 +17,19 @@ const dockerfile = readFileSync(new URL("frontend/Dockerfile", repositoryRoot), 
 const compose = readFileSync(new URL("docker-compose.yml", repositoryRoot), "utf8");
 const readme = readFileSync(new URL("README.md", repositoryRoot), "utf8");
 const deployGuide = readFileSync(new URL("docs/DEPLOY.md", repositoryRoot), "utf8");
+const securityGuide = readFileSync(new URL("docs/SECURITY.md", repositoryRoot), "utf8");
+const billingRunbook = readFileSync(
+  new URL("docs/runbooks/billing-regularization-reconciliation.md", repositoryRoot),
+  "utf8",
+);
+const backendProductionEnv = readFileSync(
+  new URL("backend/.env.production.example", repositoryRoot),
+  "utf8",
+);
+const productionEnvValidator = readFileSync(
+  new URL("scripts/validate-production-env.mjs", root),
+  "utf8",
+);
 const viteConfig = readFileSync(new URL("vite.config.ts", root), "utf8");
 const readmeCommands = [...readme.matchAll(/```(?:bash|powershell)\r?\n([\s\S]*?)```/g)]
   .flatMap(match => match[1].split(/\r?\n/))
@@ -107,4 +120,63 @@ test("Vite alias decodes file URLs instead of using encoded pathname", () => {
   assert.match(viteConfig, /import\s+\{fileURLToPath\}\s+from\s+["']node:url["']/);
   assert.match(viteConfig, /"@":\s*fileURLToPath\(new URL\(["']\.\/src["'], import\.meta\.url\)\)/);
   assert.doesNotMatch(viteConfig, /new URL\(["']\.\/src["'], import\.meta\.url\)\.pathname/);
+});
+
+test("backend production example declares only placeholder billing and Resend secrets", () => {
+  for (const entry of [
+    "ASAAS_API_URL=https://api.asaas.com/v3",
+    "ASAAS_CHECKOUT_BASE_URL=https://www.asaas.com/checkoutSession/show",
+    "ASAAS_API_KEY=cole-o-token-da-api-asaas",
+    "ASAAS_WEBHOOK_TOKEN=gere-um-token-webhook-forte-e-independente",
+    "ASAAS_CHECKOUT_EXPIRES_MINUTES=60",
+    "FRONTEND_URL=https://app.seudominio.com",
+    "EMAIL_BACKEND=core.email_backends.ResendEmailBackend",
+    "RESEND_API_KEY=cole-a-chave-restrita-de-envio-do-resend",
+  ]) {
+    assert.match(backendProductionEnv, new RegExp(`^${entry}$`, "m"));
+  }
+});
+
+test("subscription deployment docs match supported Asaas lifecycle", () => {
+  for (const document of [deployGuide, readme]) {
+    assert.match(document, /Asaas Sandbox/i);
+    assert.match(document, /Asaas.*produção/i);
+    assert.match(document, /\/api\/v1\/billing\/webhooks\/asaas\//);
+    assert.match(document, /Railway.*somente.*segredos/i);
+    assert.match(document, /callback.*redirect.*não.*confirma.*pagamento/i);
+    assert.match(document, /30 dias/i);
+    assert.match(document, /60 dias/i);
+    assert.match(document, /7 dias/i);
+    assert.match(document, /e-mail.*primeiro/i);
+  }
+  for (const eventName of [
+    "CHECKOUT_PAID",
+    "PAYMENT_CONFIRMED",
+    "PAYMENT_RECEIVED",
+    "PAYMENT_OVERDUE",
+    "PAYMENT_REPROVED_BY_RISK_ANALYSIS",
+    "PAYMENT_CHARGEBACK_REQUESTED",
+    "PAYMENT_CHARGEBACK_DISPUTE",
+    "SUBSCRIPTION_INACTIVATED",
+    "SUBSCRIPTION_DELETED",
+  ]) {
+    assert.match(deployGuide, new RegExp(`\\b${eventName}\\b`));
+  }
+  assert.match(deployGuide, /não.*recuperação.*automática/i);
+  assert.match(deployGuide, /reconciliação manual/i);
+  assert.match(deployGuide, /checkout de teste/i);
+  assert.match(securityGuide, /dados de cartão.*payload.*provedor/i);
+  assert.match(billingRunbook, /nunca execute novo checkout/i);
+});
+
+test("frontend production validator accepts only VITE public values", () => {
+  assert.throws(
+    () => validateProductionEnv({
+      ASAAS_API_KEY: "backend-secret",
+      ASAAS_WEBHOOK_TOKEN: "webhook-secret",
+      RESEND_API_KEY: "resend-secret",
+    }),
+    /VITE_API_URL/,
+  );
+  assert.doesNotMatch(productionEnvValidator, /ASAAS_|RESEND_API_KEY/);
 });
