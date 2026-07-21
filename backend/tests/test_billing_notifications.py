@@ -1,4 +1,5 @@
 from datetime import timedelta
+from uuid import uuid4
 
 import pytest
 from django.core import mail
@@ -11,6 +12,7 @@ from apps.billing.models import (
 )
 from apps.billing.tasks import (
     process_billing_webhook,
+    recover_billing_notification_emails,
     send_billing_email,
     sweep_subscription_lifecycle,
 )
@@ -180,4 +182,92 @@ def test_lifecycle_sweep_has_hourly_beat_schedule(settings):
     assert settings.CELERY_BEAT_SCHEDULE["billing-lifecycle-sweep-hourly"] == {
         "task": "apps.billing.tasks.sweep_subscription_lifecycle",
         "schedule": 3600.0,
+    }
+
+
+@pytest.mark.django_db(transaction=True)
+def test_periodic_recovery_retries_failed_billing_email(subscription, user):
+    BillingNotificationLog.objects.create(
+        subscription=subscription,
+        kind="PAYMENT_FAILED",
+        status="FAILED",
+    )
+
+    assert recover_billing_notification_emails.run() == 1
+
+    notification = BillingNotificationLog.objects.get(
+        subscription=subscription,
+        kind="PAYMENT_FAILED",
+    )
+    assert len(mail.outbox) == 1
+    assert notification.status == "SENT"
+
+
+@pytest.mark.django_db
+def test_recovery_does_not_steal_fresh_sending_claim(subscription, user, monkeypatch):
+    notification = BillingNotificationLog.objects.create(
+        subscription=subscription,
+        kind="PAYMENT_FAILED",
+        status="SENDING",
+        claim_token=uuid4(),
+    )
+    queued = []
+    monkeypatch.setattr(
+        "apps.billing.tasks.send_billing_email.delay",
+        lambda *args: queued.append(args),
+    )
+
+    assert recover_billing_notification_emails.run() == 0
+    assert send_billing_email(subscription.id, "PAYMENT_FAILED") is False
+
+    notification.refresh_from_db()
+    assert notification.status == "SENDING"
+    assert queued == []
+    assert mail.outbox == []
+
+
+@pytest.mark.django_db
+def test_recovery_releases_stale_sending_claim_and_keeps_retry_idempotent(
+    subscription, user, monkeypatch
+):
+    notification = BillingNotificationLog.objects.create(
+        subscription=subscription,
+        kind="PAYMENT_FAILED",
+        status="SENDING",
+        claim_token=uuid4(),
+    )
+    BillingNotificationLog.objects.filter(pk=notification.pk).update(
+        updated_at=timezone.now() - timedelta(minutes=6)
+    )
+    queued = []
+    monkeypatch.setattr(
+        "apps.billing.tasks.send_billing_email.delay",
+        lambda *args: queued.append(args),
+    )
+
+    assert recover_billing_notification_emails.run() == 1
+
+    notification.refresh_from_db()
+    assert notification.status == "PENDING"
+    assert notification.claim_token is None
+    assert queued == [(subscription.id, "PAYMENT_FAILED")]
+
+    monkeypatch.undo()
+    assert send_billing_email(subscription.id, "PAYMENT_FAILED") is True
+    assert send_billing_email(subscription.id, "PAYMENT_FAILED") is False
+    assert len(mail.outbox) == 1
+
+
+def test_billing_notification_recovery_beat_coexists_with_other_billing_schedules(
+    settings,
+):
+    assert settings.CELERY_BEAT_SCHEDULE[
+        "billing-notification-recovery-every-minute"
+    ] == {
+        "task": "apps.billing.tasks.recover_billing_notification_emails",
+        "schedule": 60.0,
+    }
+    assert settings.CELERY_BEAT_SCHEDULE["billing-webhook-recovery-every-minute"] == {
+        "task": "apps.billing.tasks.redispatch_unprocessed_billing_webhooks",
+        "schedule": 60.0,
     }

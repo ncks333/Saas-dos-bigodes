@@ -1,6 +1,7 @@
 from datetime import timedelta
 from decimal import Decimal
 from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
 
 from celery import shared_task
 from django.conf import settings
@@ -36,6 +37,8 @@ WEBHOOK_DISPATCH_LEASE = timedelta(minutes=5)
 WEBHOOK_RETRY_BASE_SECONDS = 60
 WEBHOOK_MAX_PROCESSING_ATTEMPTS = 5
 LIFECYCLE_SWEEP_WINDOW = timedelta(hours=1)
+NOTIFICATION_RECOVERY_BATCH_SIZE = 100
+NOTIFICATION_SENDING_LEASE = timedelta(minutes=5)
 
 BILLING_EMAIL_TEMPLATES = {
     "TRIAL_ACTIVATED": (
@@ -241,10 +244,16 @@ def send_billing_email(subscription_id, kind):
     if kind not in BILLING_EMAIL_TEMPLATES:
         raise ValueError(f"Unknown billing email kind: {kind}")
     notification = _notification_log(subscription_id, kind)
+    claim_token = uuid4()
     claimed = BillingNotificationLog.objects.filter(
         pk=notification.pk,
         status__in=("PENDING", "FAILED"),
-    ).update(status="SENDING", sent_at=None)
+    ).update(
+        status="SENDING",
+        claim_token=claim_token,
+        sent_at=None,
+        updated_at=timezone.now(),
+    )
     if not claimed:
         return False
     try:
@@ -276,12 +285,24 @@ def send_billing_email(subscription_id, kind):
             raise RuntimeError("Billing email backend did not confirm delivery")
     except Exception:
         BillingNotificationLog.objects.filter(
-            pk=notification.pk, status="SENDING"
-        ).update(status="FAILED")
+            pk=notification.pk,
+            status="SENDING",
+            claim_token=claim_token,
+        ).update(
+            status="FAILED",
+            claim_token=None,
+            updated_at=timezone.now(),
+        )
         raise
-    BillingNotificationLog.objects.filter(pk=notification.pk, status="SENDING").update(
+    BillingNotificationLog.objects.filter(
+        pk=notification.pk,
+        status="SENDING",
+        claim_token=claim_token,
+    ).update(
         status="SENT",
+        claim_token=None,
         sent_at=timezone.now(),
+        updated_at=timezone.now(),
     )
     return True
 
@@ -404,6 +425,53 @@ def redispatch_unprocessed_billing_webhooks():
             process_billing_webhook.delay(event_id)
         except Exception:
             release_billing_webhook_dispatch(event_id)
+            continue
+        dispatched_count += 1
+    return dispatched_count
+
+
+def _prepare_billing_notification_recovery(notification_id, *, now):
+    with transaction.atomic():
+        notification = BillingNotificationLog.objects.select_for_update().get(
+            pk=notification_id
+        )
+        if notification.status == "SENT":
+            return None
+        if notification.status == "SENDING":
+            if notification.updated_at > now - NOTIFICATION_SENDING_LEASE:
+                return None
+            notification.status = "PENDING"
+            notification.claim_token = None
+            notification.save(
+                update_fields=["status", "claim_token", "updated_at"]
+            )
+        elif notification.status not in {"PENDING", "FAILED"}:
+            return None
+        return notification.subscription_id, notification.kind
+
+
+@shared_task
+def recover_billing_notification_emails():
+    now = timezone.now()
+    notification_ids = list(
+        BillingNotificationLog.objects.filter(
+            Q(status__in=("PENDING", "FAILED"))
+            | Q(
+                status="SENDING",
+                updated_at__lte=now - NOTIFICATION_SENDING_LEASE,
+            )
+        )
+        .order_by("id")
+        .values_list("id", flat=True)[:NOTIFICATION_RECOVERY_BATCH_SIZE]
+    )
+    dispatched_count = 0
+    for notification_id in notification_ids:
+        dispatch = _prepare_billing_notification_recovery(notification_id, now=now)
+        if dispatch is None:
+            continue
+        try:
+            send_billing_email.delay(*dispatch)
+        except Exception:
             continue
         dispatched_count += 1
     return dispatched_count

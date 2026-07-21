@@ -120,6 +120,7 @@ class BillingNotificationLog(TimestampedModel):
     subscription = models.ForeignKey(Subscription, on_delete=models.CASCADE, related_name="notification_logs")
     kind = models.CharField(max_length=50)
     status = models.CharField(max_length=20, default="PENDING")
+    claim_token = models.UUIDField(null=True, blank=True, editable=False)
     sent_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
