@@ -188,12 +188,24 @@ test("subscription deployment docs match supported Asaas lifecycle", () => {
   assert.match(deployGuide, /trial_ends_at.*antes.*checkout/i);
   assert.match(deployGuide, /CHECKOUT_PAID.*datas.*armazenadas/i);
   assert.match(deployGuide, /não.*relê.*plan\.trial_days/i);
-  assert.match(deployGuide, /subscription\.trial_days=60.*subscription\.trial_ends_at/i);
+  assert.match(deployGuide, /nextDueDate.*Asaas.*criação do checkout/i);
+  assert.match(deployGuide, /alterar.*subscription.*após signup.*proibido.*insuficiente/i);
+  assert.match(deployGuide, /SubscriptionPlan\.trial_days=60.*ANTES.*signup\/provision_signup/i);
+  assert.match(deployGuide, /snapshot local.*nextDueDate.*60/i);
+  assert.match(deployGuide, /restaure.*30.*após.*checkout/i);
+  assert.match(deployGuide, /antes.*signup público concorrente/i);
+  assert.match(deployGuide, /plano\/oferta piloto.*servidor.*antes.*provisioning/i);
+  assert.match(deployGuide, /checkout.*30.*não edite.*banco.*cancele.*reemita/i);
+  assert.doesNotMatch(deployGuide, /subscription\.trial_days=60.*subscription\.trial_ends_at/i);
+  assert.doesNotMatch(deployGuide, /processamento é idempotente para eventos e e-mails/i);
+  assert.match(deployGuide, /eventos de webhook e e-mails de ciclo.*idempotentes/i);
   assert.match(securityGuide, /dados de cartão.*payload.*provedor/i);
   assert.match(securityGuide, /e-mails de ciclo.*idempotentes por evento/i);
   assert.match(securityGuide, /e-mail de regularização.*token assinado.*uma hora/i);
   assert.match(securityGuide, /requisições públicas repetidas.*podem.*enfileirar e-mails repetidos/i);
   assert.match(securityGuide, /não enumera contas/i);
+  assert.match(readme, /SubscriptionPlan\.trial_days=60.*antes.*signup\/provision_signup/i);
+  assert.match(readme, /checkout.*30.*não edite.*banco.*cancele.*reemita/i);
   assert.match(billingRunbook, /nunca execute novo checkout/i);
 });
 

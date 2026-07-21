@@ -103,3 +103,32 @@ Verification after fixes:
 
 `frontend/tsconfig.tsbuildinfo` changed during build and was restored before
 commit; it is intentionally excluded.
+
+## Pilot safety follow-up — 2026-07-21
+
+### RED
+
+After replacing unsafe pilot assertions, `cd frontend && npm run test:config`
+returned 19 passed and 1 failed. The missing assertion target was the required
+Asaas `nextDueDate`/checkout-creation warning.
+
+### Fixes and GREEN
+
+This section supersedes the earlier after-signup pilot wording.
+
+- Deployment and README now state that checkout creation sends
+  `subscription.next_billing_at` as Asaas `nextDueDate`; post-signup
+  subscription edits are prohibited and insufficient.
+- One first-client 60-day pilot is documented only before public concurrent
+  signup: set server-side `SubscriptionPlan.trial_days=60` before
+  `signup/provision_signup`, complete checkout with local/Asaas 60-day values,
+  then restore public plan to 30.
+- Concurrent acquisition requires a server-side pilot plan/offer before
+  provisioning. Existing 30-day checkout requires cancellation and reissue via
+  support/implemented operational flow, or clean test signup after cancelling
+  old checkout; database-only edits are forbidden.
+- Idempotency language now names only webhook events and lifecycle billing
+  emails. Public regularization requests may repeat email.
+
+Verification: `cd frontend && npm run test:config` — 20 passed. `git diff
+--check` — passed.
