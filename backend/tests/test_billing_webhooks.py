@@ -159,7 +159,7 @@ def test_regularization_checkout_paid_reactivates_blocked_subscription_once(
     subscription.status = starting_status
     subscription.provider_subscription_id = previous_provider_subscription_id
     subscription.regularization_checkout_id = "chk_regularization"
-    subscription.regularization_checkout_url = "https://asaas.test/regularization"
+    subscription.regularization_checkout_url = "https://sandbox.asaas.com/regularization"
     subscription.regularization_checkout_state = "CREATED"
     subscription.regularization_checkout_reference = attempt_reference
     subscription.suspended_at = timezone.now()
@@ -274,7 +274,7 @@ def test_unrelated_checkout_cannot_reactivate_persisted_regularization_checkout(
     subscription.regularization_checkout_state = "CREATED"
     subscription.regularization_checkout_id = "chk_expected"
     subscription.regularization_checkout_reference = attempt_reference
-    subscription.regularization_checkout_url = "https://asaas.test/expected"
+    subscription.regularization_checkout_url = "https://sandbox.asaas.com/expected"
     subscription.save(
         update_fields=[
             "status",
@@ -323,7 +323,7 @@ def test_legacy_created_checkout_requires_its_static_reference_and_exact_id(
     subscription.status = Subscription.Status.SUSPENDED
     subscription.regularization_checkout_state = "CREATED"
     subscription.regularization_checkout_id = "chk_legacy"
-    subscription.regularization_checkout_url = "https://asaas.test/legacy"
+    subscription.regularization_checkout_url = "https://sandbox.asaas.com/legacy"
     subscription.regularization_checkout_reference = subscription.external_reference
     subscription.save(
         update_fields=[
@@ -382,7 +382,7 @@ def test_legacy_attach_with_attempt_reference_allows_exact_webhook_recovery(
         "reconcile_regularization_checkout",
         subscription_id=subscription.id,
         verified_checkout_id="chk_legacy_attached",
-        verified_checkout_url="https://asaas.test/legacy-attached",
+        verified_checkout_url="https://sandbox.asaas.com/legacy-attached",
         attempt_reference=str(attempt_reference),
     )
 
@@ -464,7 +464,7 @@ def test_distinct_regularization_reactivations_send_one_email_per_provider_event
     subscription.regularization_checkout_state = "CREATED"
     subscription.regularization_checkout_id = "chk_reactivate_one"
     subscription.regularization_checkout_reference = first_attempt_reference
-    subscription.regularization_checkout_url = "https://asaas.test/one"
+    subscription.regularization_checkout_url = "https://sandbox.asaas.com/one"
     subscription.save(
         update_fields=[
             "status",
@@ -508,7 +508,7 @@ def test_distinct_regularization_reactivations_send_one_email_per_provider_event
             subscription.regularization_checkout_state = "CREATED"
             subscription.regularization_checkout_id = "chk_reactivate_two"
             subscription.regularization_checkout_reference = second_attempt_reference
-            subscription.regularization_checkout_url = "https://asaas.test/two"
+            subscription.regularization_checkout_url = "https://sandbox.asaas.com/two"
             subscription.save(
                 update_fields=[
                     "status",

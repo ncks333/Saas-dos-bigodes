@@ -152,9 +152,14 @@ RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 ASAAS_API_URL = os.getenv("ASAAS_API_URL", "https://api-sandbox.asaas.com/v3")
 ASAAS_CHECKOUT_BASE_URL = os.getenv("ASAAS_CHECKOUT_BASE_URL", "https://sandbox.asaas.com/checkoutSession/show")
+ASAAS_CHECKOUT_ALLOWED_ORIGINS = env_list(
+    "ASAAS_CHECKOUT_ALLOWED_ORIGINS",
+    "https://sandbox.asaas.com",
+)
 ASAAS_API_KEY = os.getenv("ASAAS_API_KEY", "")
 ASAAS_WEBHOOK_TOKEN = os.getenv("ASAAS_WEBHOOK_TOKEN", "")
 ASAAS_CHECKOUT_EXPIRES_MINUTES = int(os.getenv("ASAAS_CHECKOUT_EXPIRES_MINUTES", "60"))
+BILLING_PUBLIC_PLAN_CODE = os.getenv("BILLING_PUBLIC_PLAN_CODE", "barberhub")
 PASSWORD_RESET_TIMEOUT = int(os.getenv("PASSWORD_RESET_TIMEOUT", "3600"))
 EMAIL_HOST = os.getenv("EMAIL_HOST", "")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))

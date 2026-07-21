@@ -336,7 +336,6 @@ test("cadastro envia somente campos declarados e usa checkout seguro do servidor
     barbershop_name: "Barbearia João",
     slug: "barbearia-joao",
     whatsapp: "11999999999",
-    plan_code: "barberhub",
     captcha_token: "development",
     terms_accepted: true,
   });

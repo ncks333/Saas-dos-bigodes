@@ -1,4 +1,5 @@
 import os
+from urllib.parse import urlsplit
 
 # ruff: noqa: F405
 
@@ -20,14 +21,29 @@ if EMAIL_BACKEND == "core.email_backends.ResendEmailBackend" and not RESEND_API_
     raise RuntimeError("RESEND_API_KEY deve ser configurada para o backend Resend")
 if not FRONTEND_URL.startswith("https://"):  # noqa: F405
     raise RuntimeError("FRONTEND_URL deve usar HTTPS em produção")
-if not ASAAS_API_KEY:  # noqa: F405
-    raise RuntimeError("ASAAS_API_KEY deve ser configurada em produção")
-if not ASAAS_WEBHOOK_TOKEN:  # noqa: F405
-    raise RuntimeError("ASAAS_WEBHOOK_TOKEN deve ser configurada em produção")
-if not ASAAS_API_URL.startswith("https://"):  # noqa: F405
-    raise RuntimeError("ASAAS_API_URL deve usar HTTPS em produção")
-if not ASAAS_CHECKOUT_BASE_URL.startswith("https://"):  # noqa: F405
-    raise RuntimeError("ASAAS_CHECKOUT_BASE_URL deve usar HTTPS em produção")
+if len(ASAAS_API_KEY) < 32:  # noqa: F405
+    raise RuntimeError("ASAAS_API_KEY deve ser forte e configurada em produção")
+if len(ASAAS_WEBHOOK_TOKEN) < 32 or ASAAS_WEBHOOK_TOKEN == ASAAS_API_KEY:  # noqa: F405
+    raise RuntimeError("ASAAS_WEBHOOK_TOKEN deve ser forte e independente em produção")
+if ASAAS_API_URL.rstrip("/") != "https://api.asaas.com/v3":  # noqa: F405
+    raise RuntimeError("ASAAS_API_URL deve usar HTTPS no host oficial de produção")
+_asaas_checkout_url = urlsplit(ASAAS_CHECKOUT_BASE_URL)  # noqa: F405
+_asaas_checkout_origin = f"{_asaas_checkout_url.scheme}://{_asaas_checkout_url.netloc}"
+_asaas_production_origins = {"https://asaas.com", "https://www.asaas.com"}
+if (
+    _asaas_checkout_url.scheme != "https"
+    or _asaas_checkout_url.username
+    or _asaas_checkout_url.password
+    or _asaas_checkout_origin not in _asaas_production_origins
+):
+    raise RuntimeError("ASAAS_CHECKOUT_BASE_URL deve usar origem oficial HTTPS de produção")
+if not ASAAS_CHECKOUT_ALLOWED_ORIGINS or any(  # noqa: F405
+    origin not in _asaas_production_origins
+    for origin in ASAAS_CHECKOUT_ALLOWED_ORIGINS  # noqa: F405
+):
+    raise RuntimeError("ASAAS_CHECKOUT_ALLOWED_ORIGINS deve conter origens oficiais de produção")
+if not 10 <= ASAAS_CHECKOUT_EXPIRES_MINUTES <= 1440:  # noqa: F405
+    raise RuntimeError("ASAAS_CHECKOUT_EXPIRES_MINUTES deve ficar entre 10 e 1440")
 if not all((
     WHATSAPP_GRAPH_API_VERSION, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_ACCESS_TOKEN,
     WHATSAPP_TEMPLATE_LANGUAGE, WHATSAPP_CONFIRMATION_TEMPLATE, WHATSAPP_REMINDER_TEMPLATE,

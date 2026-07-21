@@ -14,7 +14,7 @@ from rest_framework.views import APIView
 from core.security.turnstile import verify_turnstile
 
 from .models import BillingWebhookEvent, Subscription, SubscriptionPlan
-from .providers.asaas import AsaasCheckoutError
+from .providers.asaas import AsaasCheckoutError, validate_checkout_url
 from .serializers import (
     PublicPlanSerializer,
     RegularizationCheckoutSerializer,
@@ -46,7 +46,7 @@ class PublicPlanView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        plan = SubscriptionPlan.objects.filter(active=True).order_by("id").first()
+        plan = _public_plan()
         if plan is None:
             raise NotFound("Plano indisponível.")
         return Response(PublicPlanSerializer(plan).data)
@@ -63,18 +63,19 @@ class SignupView(APIView):
             request.META.get("REMOTE_ADDR"),
         ):
             raise serializers.ValidationError("Verificação anti-bot inválida.")
-        plan = SubscriptionPlan.objects.filter(
-            code=serializer.validated_data["plan_code"],
-            active=True,
-        ).first()
+        plan = _public_plan()
         if plan is None:
-            raise serializers.ValidationError({"plan_code": "Plano indisponível."})
+            raise serializers.ValidationError({"plan": "Plano indisponível."})
         try:
             subscription, checkout = provision_signup(
                 serializer.validated_data,
                 plan,
                 request=request,
             )
+        except AsaasCheckoutError as exc:
+            raise ProviderUnavailable() from exc
+        try:
+            validate_checkout_url(checkout.url)
         except AsaasCheckoutError as exc:
             raise ProviderUnavailable() from exc
         return Response(
@@ -143,6 +144,10 @@ class RegularizationCheckoutView(APIView):
             raise serializers.ValidationError(
                 {"token": "Token inválido ou expirado."}
             )
+        try:
+            validate_checkout_url(checkout.url)
+        except AsaasCheckoutError as exc:
+            raise ProviderUnavailable() from exc
         return Response({"checkout_url": checkout.url})
 
 
@@ -194,3 +199,10 @@ def _valid_provider_identifier(value, max_length):
         and 0 < len(value) <= max_length
         and all(character.isprintable() and not character.isspace() for character in value)
     )
+
+
+def _public_plan():
+    return SubscriptionPlan.objects.filter(
+        active=True,
+        code=settings.BILLING_PUBLIC_PLAN_CODE,
+    ).first()

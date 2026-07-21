@@ -20,6 +20,7 @@ from apps.billing.providers.asaas import (
 ASAAS_SETTINGS = {
     "ASAAS_API_URL": "https://api-sandbox.asaas.com/v3",
     "ASAAS_CHECKOUT_BASE_URL": "https://sandbox.asaas.com/checkoutSession/show",
+    "ASAAS_CHECKOUT_ALLOWED_ORIGINS": ["https://sandbox.asaas.com"],
     "ASAAS_API_KEY": "asaas-test-token",
     "ASAAS_CHECKOUT_EXPIRES_MINUTES": 60,
     "FRONTEND_URL": "https://app.example.com/",
@@ -245,6 +246,46 @@ def test_checkout_malformed_success_payload_becomes_safe_provider_error(
 
     with pytest.raises(AsaasCheckoutError):
         create_regularization_checkout(subscription, user)
+
+
+@pytest.mark.django_db
+@override_settings(**ASAAS_SETTINGS)
+@pytest.mark.parametrize(
+    "link",
+    [
+        "http://sandbox.asaas.com/checkout/chk_1",
+        "https://evil.example/checkout/chk_1",
+        "https://sandbox.asaas.com.evil.example/checkout/chk_1",
+        "https://user:password@sandbox.asaas.com/checkout/chk_1",
+    ],
+)
+def test_checkout_rejects_non_allowlisted_provider_link(
+    monkeypatch, subscription, user, link
+):
+    subscription.next_billing_at = timezone.now() + timedelta(days=30)
+    subscription.save(update_fields=["next_billing_at", "updated_at"])
+
+    class UnsafeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"id": "chk_unsafe", "link": link}
+
+    monkeypatch.setattr(
+        "apps.billing.providers.asaas.requests.post",
+        lambda *_args, **_kwargs: UnsafeResponse(),
+    )
+
+    with pytest.raises(AsaasCheckoutOutcomeUnknownError):
+        create_recurring_checkout(subscription, user)
+
+
+@override_settings(**ASAAS_SETTINGS)
+def test_checkout_url_validator_accepts_exact_configured_sandbox_origin():
+    assert asaas.validate_checkout_url(
+        "https://sandbox.asaas.com/checkoutSession/show/chk_1"
+    ) == "https://sandbox.asaas.com/checkoutSession/show/chk_1"
 
 
 @pytest.mark.django_db

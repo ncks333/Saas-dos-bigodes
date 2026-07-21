@@ -23,10 +23,12 @@ def production_environment(**overrides):
         "WHATSAPP_TEMPLATE_LANGUAGE": "pt_BR",
         "WHATSAPP_CONFIRMATION_TEMPLATE": "confirmation",
         "WHATSAPP_REMINDER_TEMPLATE": "reminder",
-        "ASAAS_API_KEY": "asaas-production-token",
+        "ASAAS_API_KEY": "a" * 40,
         "ASAAS_API_URL": "https://api.asaas.com/v3",
         "ASAAS_CHECKOUT_BASE_URL": "https://www.asaas.com/checkoutSession/show",
-        "ASAAS_WEBHOOK_TOKEN": "asaas-webhook-test-token",
+        "ASAAS_CHECKOUT_ALLOWED_ORIGINS": "https://asaas.com,https://www.asaas.com",
+        "ASAAS_WEBHOOK_TOKEN": "w" * 64,
+        "ASAAS_CHECKOUT_EXPIRES_MINUTES": "60",
     }
     environment.update(overrides)
     return environment
@@ -50,6 +52,13 @@ def test_production_settings_require_asaas_api_key():
     assert "ASAAS_API_KEY" in result.stderr
 
 
+def test_production_settings_require_strong_asaas_api_key():
+    result = import_production_settings(ASAAS_API_KEY="short")
+
+    assert result.returncode != 0
+    assert "ASAAS_API_KEY" in result.stderr
+
+
 def test_production_settings_require_asaas_webhook_token():
     result = import_production_settings(ASAAS_WEBHOOK_TOKEN="")
 
@@ -62,3 +71,30 @@ def test_production_settings_require_https_asaas_urls():
 
     assert result.returncode != 0
     assert "ASAAS_API_URL deve usar HTTPS" in result.stderr
+
+
+def test_production_settings_require_exact_asaas_hosts():
+    for overrides, expected in [
+        ({"ASAAS_API_URL": "https://evil.example/v3"}, "ASAAS_API_URL"),
+        (
+            {"ASAAS_CHECKOUT_BASE_URL": "https://evil.example/checkout"},
+            "ASAAS_CHECKOUT_BASE_URL",
+        ),
+    ]:
+        result = import_production_settings(**overrides)
+        assert result.returncode != 0
+        assert expected in result.stderr
+
+
+def test_production_settings_require_strong_independent_webhook_token():
+    for token in ["short", "a" * 40]:
+        result = import_production_settings(ASAAS_WEBHOOK_TOKEN=token)
+        assert result.returncode != 0
+        assert "ASAAS_WEBHOOK_TOKEN" in result.stderr
+
+
+def test_production_settings_require_documented_checkout_expiry_range():
+    for minutes in ["9", "1441"]:
+        result = import_production_settings(ASAAS_CHECKOUT_EXPIRES_MINUTES=minutes)
+        assert result.returncode != 0
+        assert "ASAAS_CHECKOUT_EXPIRES_MINUTES" in result.stderr

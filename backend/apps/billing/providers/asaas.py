@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 import requests
 from django.conf import settings
@@ -21,6 +22,25 @@ class AsaasCheckoutOutcomeUnknownError(AsaasCheckoutError):
 class CheckoutResult:
     id: str
     url: str
+
+
+def validate_checkout_url(url: str) -> str:
+    if not isinstance(url, str) or not url:
+        raise AsaasCheckoutOutcomeUnknownError(
+            "URL de checkout Asaas ausente ou inválida"
+        )
+    parsed = urlsplit(url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    if (
+        parsed.scheme != "https"
+        or parsed.username
+        or parsed.password
+        or origin not in settings.ASAAS_CHECKOUT_ALLOWED_ORIGINS
+    ):
+        raise AsaasCheckoutOutcomeUnknownError(
+            "URL de checkout Asaas fora das origens permitidas"
+        )
+    return url
 
 
 def _create_checkout(
@@ -100,7 +120,9 @@ def _create_checkout(
         raise AsaasCheckoutOutcomeUnknownError(
             "Resultado da criação de checkout Asaas é desconhecido"
         )
-    url = link or f"{settings.ASAAS_CHECKOUT_BASE_URL}?id={checkout_id}"
+    url = validate_checkout_url(
+        link or f"{settings.ASAAS_CHECKOUT_BASE_URL}?id={checkout_id}"
+    )
     return CheckoutResult(id=checkout_id, url=url)
 
 

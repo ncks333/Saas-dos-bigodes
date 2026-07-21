@@ -128,7 +128,7 @@ def test_0008_backfills_only_known_legacy_regularization_checkouts():
             "legacy-created",
             "CREATED",
             "chk_legacy",
-            "https://asaas.test/chk_legacy",
+            "https://sandbox.asaas.com/chk_legacy",
         )
         creating = create_subscription("legacy-creating", "CREATING")
         reconciliation = create_subscription(

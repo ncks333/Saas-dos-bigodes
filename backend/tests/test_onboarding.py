@@ -8,8 +8,9 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.audit.models import AuditEvent
 from apps.barbershops.models import Barbershop, OperatingHour
-from apps.billing.models import Subscription
+from apps.billing.models import Subscription, SubscriptionPlan
 from apps.billing.providers.asaas import AsaasCheckoutError, CheckoutResult
+from apps.billing.services import provision_signup
 
 
 def signup_payload(**overrides):
@@ -44,6 +45,98 @@ def test_public_plan_exposes_server_owned_price(client, plan):
 
 
 @pytest.mark.django_db
+def test_public_plan_uses_canonical_server_code_not_first_active_plan(
+    client, plan, settings
+):
+    plan.code = "internal-first"
+    plan.save(update_fields=["code", "updated_at"])
+    canonical = SubscriptionPlan.objects.create(
+        code="barberhub",
+        name="BarberHub público",
+        amount=Decimal("89.90"),
+        trial_days=30,
+    )
+    settings.BILLING_PUBLIC_PLAN_CODE = canonical.code
+
+    response = client.get("/api/v1/billing/plans/current/")
+
+    assert response.status_code == 200
+    assert response.data["code"] == canonical.code
+    assert response.data["amount"] == "89.90"
+
+
+@pytest.mark.django_db
+def test_signup_cannot_select_internal_active_plan(client, plan, monkeypatch, settings):
+    internal = SubscriptionPlan.objects.create(
+        code="internal-60",
+        name="Oferta interna",
+        amount=Decimal("1.00"),
+        trial_days=60,
+    )
+    settings.BILLING_PUBLIC_PLAN_CODE = plan.code
+    monkeypatch.setattr("apps.billing.views.verify_turnstile", lambda *_args: True)
+    monkeypatch.setattr(
+        "apps.billing.services.create_recurring_checkout",
+        lambda subscription, _user: CheckoutResult(
+            id="chk_public",
+            url="https://sandbox.asaas.com/checkoutSession/show/chk_public",
+        ),
+    )
+
+    response = client.post(
+        "/api/v1/billing/signup/",
+        signup_payload(plan_code=internal.code),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 201
+    subscription = Subscription.objects.get(barbershop__slug="barbearia-joao")
+    assert subscription.plan_id == plan.id
+    assert subscription.trial_days == plan.trial_days
+
+
+@pytest.mark.django_db
+def test_trusted_server_plan_preserves_preprovisioned_60_day_pilot(
+    monkeypatch, plan
+):
+    pilot_plan = SubscriptionPlan.objects.create(
+        code="pilot-60-server-only",
+        name="Piloto 60 dias",
+        amount=plan.amount,
+        trial_days=60,
+        active=False,
+    )
+    now = timezone.now()
+    captured = {}
+    monkeypatch.setattr("apps.billing.services.timezone.now", lambda: now)
+    monkeypatch.setattr(
+        "apps.billing.services.create_recurring_checkout",
+        lambda subscription, _user: captured.update(
+            {"next_billing_at": subscription.next_billing_at}
+        )
+        or CheckoutResult(
+            id="chk_pilot",
+            url="https://sandbox.asaas.com/checkoutSession/show/chk_pilot",
+        ),
+    )
+    data = signup_payload(
+        email="pilot@example.com",
+        username="pilot",
+        slug="piloto-60",
+        whatsapp="5511999999999",
+    )
+
+    subscription, _checkout = provision_signup(data, pilot_plan)
+
+    assert subscription.plan_id == pilot_plan.id
+    assert subscription.trial_days == 60
+    assert subscription.trial_ends_at == now + timedelta(days=60)
+    assert captured["next_billing_at"] == subscription.trial_ends_at + timedelta(
+        days=1
+    )
+
+
+@pytest.mark.django_db
 def test_signup_creates_pending_tenant_and_hosted_checkout(client, plan, monkeypatch):
     now = timezone.now()
     monkeypatch.setattr("apps.billing.views.verify_turnstile", lambda *_args: True)
@@ -51,7 +144,7 @@ def test_signup_creates_pending_tenant_and_hosted_checkout(client, plan, monkeyp
     monkeypatch.setattr(
         "apps.billing.services.create_recurring_checkout",
         lambda subscription, user: CheckoutResult(
-            id="chk_1", url="https://asaas.test/chk_1"
+            id="chk_1", url="https://sandbox.asaas.com/checkoutSession/show/chk_1"
         ),
     )
 
@@ -63,7 +156,7 @@ def test_signup_creates_pending_tenant_and_hosted_checkout(client, plan, monkeyp
 
     assert response.status_code == 201
     assert set(response.data) == {"checkout_url", "external_reference"}
-    assert response.data["checkout_url"] == "https://asaas.test/chk_1"
+    assert response.data["checkout_url"] == "https://sandbox.asaas.com/checkoutSession/show/chk_1"
     subscription = Subscription.objects.get(barbershop__slug="barbearia-joao")
     assert subscription.plan_id == plan.id
     assert subscription.plan.amount == Decimal("79.90")
@@ -152,6 +245,28 @@ def test_provider_failure_returns_503_and_rolls_back_local_tenant(
 
 
 @pytest.mark.django_db
+def test_signup_api_rejects_non_asaas_checkout_url_and_rolls_back(
+    client, plan, monkeypatch
+):
+    monkeypatch.setattr("apps.billing.views.verify_turnstile", lambda *_args: True)
+    monkeypatch.setattr(
+        "apps.billing.services.create_recurring_checkout",
+        lambda *_args: CheckoutResult(
+            id="chk_evil", url="https://evil.example/checkout/chk_evil"
+        ),
+    )
+    monkeypatch.setattr("apps.billing.services.cancel_checkout", lambda *_args: None)
+
+    response = client.post(
+        "/api/v1/billing/signup/", signup_payload(), content_type="application/json"
+    )
+
+    assert response.status_code == 503
+    assert Subscription.objects.count() == 0
+    assert Barbershop.objects.count() == 0
+
+
+@pytest.mark.django_db
 def test_audit_failure_prevents_provider_call_and_rolls_back_tenant(
     client, plan, monkeypatch
 ):
@@ -186,7 +301,9 @@ def test_local_failure_after_checkout_cancels_remote_checkout_and_rolls_back_ten
     monkeypatch.setattr("apps.billing.views.verify_turnstile", lambda *_args: True)
     monkeypatch.setattr(
         "apps.billing.services.create_recurring_checkout",
-        lambda *_args: CheckoutResult(id="chk_1", url="https://asaas.test/chk_1"),
+        lambda *_args: CheckoutResult(
+            id="chk_1", url="https://sandbox.asaas.com/checkoutSession/show/chk_1"
+        ),
     )
     monkeypatch.setattr(
         "apps.billing.services.cancel_checkout",

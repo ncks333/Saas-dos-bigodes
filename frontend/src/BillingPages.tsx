@@ -177,7 +177,6 @@ export function SignupPage() {
         barbershop_name: barbershopName,
         slug,
         whatsapp,
-        plan_code: planQuery.data.code,
         captcha_token: captchaToken,
         terms_accepted: termsAccepted,
       });

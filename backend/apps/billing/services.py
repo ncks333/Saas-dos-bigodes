@@ -5,7 +5,6 @@ from datetime import UTC, time, timedelta
 from uuid import UUID, uuid4
 
 from django.core.signing import TimestampSigner
-from django.core.validators import URLValidator
 from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -23,6 +22,7 @@ from .providers.asaas import (
     cancel_checkout,
     create_recurring_checkout,
     create_regularization_checkout,
+    validate_checkout_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -453,6 +453,7 @@ def provision_signup(data, plan, *, request=None):
                 request=request,
             )
             checkout = create_recurring_checkout(subscription, user)
+            validate_checkout_url(checkout.url)
             subscription.provider_checkout_id = checkout.id
             subscription.save(update_fields=["provider_checkout_id", "updated_at"])
         return subscription, checkout
@@ -554,6 +555,7 @@ def _claim_regularization_checkout(subscription_id):
 
 
 def _persist_regularization_checkout(subscription_id, claim, checkout):
+    validate_checkout_url(checkout.url)
     with transaction.atomic():
         subscription = Subscription.objects.select_for_update().get(pk=subscription_id)
         if (
@@ -695,8 +697,8 @@ def reconcile_regularization_checkout(
         if not checkout_id or len(checkout_id) > 100:
             raise ValueError("ID de checkout verificado é inválido.")
         try:
-            URLValidator()(checkout_url)
-        except Exception as exc:
+            validate_checkout_url(checkout_url)
+        except AsaasCheckoutError as exc:
             raise ValueError("URL de checkout verificada é inválida.") from exc
     if attempt_reference:
         try:

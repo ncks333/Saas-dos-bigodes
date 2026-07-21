@@ -186,7 +186,7 @@ def test_valid_regularization_token_returns_and_persists_hosted_checkout(
     monkeypatch.setattr(
         "apps.billing.services.create_regularization_checkout",
         lambda _subscription, _user: CheckoutResult(
-            id="chk_reg", url="https://asaas.test/reg"
+            id="chk_reg", url="https://sandbox.asaas.com/reg"
         ),
         raising=False,
     )
@@ -199,7 +199,7 @@ def test_valid_regularization_token_returns_and_persists_hosted_checkout(
     )
 
     assert response.status_code == 200
-    assert response.data == {"checkout_url": "https://asaas.test/reg"}
+    assert response.data == {"checkout_url": "https://sandbox.asaas.com/reg"}
     subscription.refresh_from_db()
     assert subscription.provider_checkout_id == "chk_reg"
 
@@ -214,7 +214,7 @@ def test_regularization_checkout_reuses_persisted_checkout_without_provider_retr
     monkeypatch.setattr(
         "apps.billing.services.create_regularization_checkout",
         lambda _subscription, _user: calls.append(True)
-        or CheckoutResult(id="chk_reused", url="https://asaas.test/reused"),
+        or CheckoutResult(id="chk_reused", url="https://sandbox.asaas.com/reused"),
     )
 
     first = provision_regularization_checkout(subscription)
@@ -222,11 +222,11 @@ def test_regularization_checkout_reuses_persisted_checkout_without_provider_retr
 
     subscription.refresh_from_db()
     assert first == second == CheckoutResult(
-        id="chk_reused", url="https://asaas.test/reused"
+        id="chk_reused", url="https://sandbox.asaas.com/reused"
     )
     assert calls == [True]
     assert subscription.regularization_checkout_id == "chk_reused"
-    assert subscription.regularization_checkout_url == "https://asaas.test/reused"
+    assert subscription.regularization_checkout_url == "https://sandbox.asaas.com/reused"
 
 
 @pytest.mark.django_db
@@ -241,7 +241,7 @@ def test_regularization_checkout_uses_new_attempt_reference_for_provider_call(
         lambda claimed_subscription, _user: captured_references.append(
             claimed_subscription.regularization_checkout_reference
         )
-        or CheckoutResult(id="chk_attempt", url="https://asaas.test/attempt"),
+        or CheckoutResult(id="chk_attempt", url="https://sandbox.asaas.com/attempt"),
     )
 
     provision_regularization_checkout(subscription)
@@ -269,7 +269,7 @@ def test_regularization_checkout_waits_for_concurrent_claim_without_provider_ret
     monkeypatch.setattr(
         "apps.billing.services._wait_for_regularization_checkout",
         lambda *_args: CheckoutResult(
-            id="chk_concurrent", url="https://asaas.test/concurrent"
+            id="chk_concurrent", url="https://sandbox.asaas.com/concurrent"
         ),
     )
     monkeypatch.setattr(
@@ -280,7 +280,7 @@ def test_regularization_checkout_waits_for_concurrent_claim_without_provider_ret
     checkout = provision_regularization_checkout(subscription)
 
     assert checkout == CheckoutResult(
-        id="chk_concurrent", url="https://asaas.test/concurrent"
+        id="chk_concurrent", url="https://sandbox.asaas.com/concurrent"
     )
 
 
@@ -295,7 +295,7 @@ def test_regularization_checkout_provider_call_runs_outside_transaction(
 
     def create_checkout(_subscription, _user):
         assert connection.in_atomic_block is False
-        return CheckoutResult(id="chk_unlocked", url="https://asaas.test/unlocked")
+        return CheckoutResult(id="chk_unlocked", url="https://sandbox.asaas.com/unlocked")
 
     monkeypatch.setattr(
         "apps.billing.services.create_regularization_checkout", create_checkout
@@ -316,7 +316,7 @@ def test_regularization_checkout_cancels_provider_checkout_when_persistence_fail
     monkeypatch.setattr(
         "apps.billing.services.create_regularization_checkout",
         lambda _subscription, _user: CheckoutResult(
-            id="chk_compensate", url="https://asaas.test/compensate"
+            id="chk_compensate", url="https://sandbox.asaas.com/compensate"
         ),
     )
     monkeypatch.setattr(
@@ -392,7 +392,7 @@ def test_compensation_failure_requires_reconciliation_and_no_retry(
     monkeypatch.setattr(
         "apps.billing.services.create_regularization_checkout",
         lambda *_args: provider_calls.append(True)
-        or CheckoutResult(id="chk_uncertain", url="https://asaas.test/uncertain"),
+        or CheckoutResult(id="chk_uncertain", url="https://sandbox.asaas.com/uncertain"),
     )
     monkeypatch.setattr(
         "apps.billing.services._persist_regularization_checkout",
@@ -439,19 +439,51 @@ def test_reconciliation_command_attaches_verified_checkout(subscription):
         "reconcile_regularization_checkout",
         subscription_id=subscription.id,
         verified_checkout_id="chk_verified",
-        verified_checkout_url="https://asaas.test/verified",
+        verified_checkout_url="https://sandbox.asaas.com/verified",
     )
 
     subscription.refresh_from_db()
     assert subscription.regularization_checkout_state == "CREATED"
     assert subscription.regularization_checkout_id == "chk_verified"
-    assert subscription.regularization_checkout_url == "https://asaas.test/verified"
+    assert subscription.regularization_checkout_url == "https://sandbox.asaas.com/verified"
     assert subscription.regularization_checkout_claim is None
     assert AuditEvent.objects.filter(
         barbershop=subscription.barbershop,
         action="BILLING_REGULARIZATION_CHECKOUT_ATTACHED",
         target_id=str(subscription.id),
     ).exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "checkout_url",
+    [
+        "http://sandbox.asaas.com/checkout/chk_verified",
+        "https://evil.example/checkout/chk_verified",
+    ],
+)
+def test_reconciliation_command_rejects_non_allowlisted_checkout_url(
+    subscription, checkout_url
+):
+    subscription.status = Subscription.Status.SUSPENDED
+    subscription.regularization_checkout_state = "RECONCILIATION_REQUIRED"
+    subscription.regularization_checkout_reference = uuid4()
+    subscription.save(
+        update_fields=[
+            "status",
+            "regularization_checkout_state",
+            "regularization_checkout_reference",
+            "updated_at",
+        ]
+    )
+
+    with pytest.raises(CommandError, match="URL de checkout"):
+        call_command(
+            "reconcile_regularization_checkout",
+            subscription_id=subscription.id,
+            verified_checkout_id="chk_verified",
+            verified_checkout_url=checkout_url,
+        )
 
 
 @pytest.mark.django_db
@@ -475,7 +507,7 @@ def test_legacy_unknown_checkout_requires_explicit_attempt_reference_to_attach(
             "reconcile_regularization_checkout",
             subscription_id=subscription.id,
             verified_checkout_id="chk_legacy_verified",
-            verified_checkout_url="https://asaas.test/legacy-verified",
+            verified_checkout_url="https://sandbox.asaas.com/legacy-verified",
         )
 
     attempt_reference = uuid4()
@@ -483,7 +515,7 @@ def test_legacy_unknown_checkout_requires_explicit_attempt_reference_to_attach(
         "reconcile_regularization_checkout",
         subscription_id=subscription.id,
         verified_checkout_id="chk_legacy_verified",
-        verified_checkout_url="https://asaas.test/legacy-verified",
+        verified_checkout_url="https://sandbox.asaas.com/legacy-verified",
         attempt_reference=str(attempt_reference),
     )
 
@@ -587,7 +619,7 @@ def test_fresh_claim_provider_completion_survives_reconciliation_rejection(
     _persist_regularization_checkout(
         subscription.id,
         claim,
-        CheckoutResult(id="chk_live", url="https://asaas.test/live"),
+        CheckoutResult(id="chk_live", url="https://sandbox.asaas.com/live"),
     )
 
     subscription.refresh_from_db()

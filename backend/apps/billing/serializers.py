@@ -29,7 +29,6 @@ class SignupSerializer(serializers.Serializer):
         max_length=80, validators=[UniqueValidator(queryset=Barbershop.objects.all())]
     )
     whatsapp = serializers.CharField(max_length=20)
-    plan_code = serializers.SlugField(max_length=50)
     captcha_token = serializers.CharField(write_only=True)
     terms_accepted = serializers.BooleanField()
 
