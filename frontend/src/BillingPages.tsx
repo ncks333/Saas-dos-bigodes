@@ -4,6 +4,7 @@ import {CalendarCheck2, CheckCircle2, CircleAlert, Clock3, CreditCard, Mail, Sci
 import {FormEvent, useEffect, useRef, useState} from "react";
 import api from "./api";
 import {usePageMetadata} from "./metadata";
+import {getRegularizationToken} from "./regularizationToken";
 import "./billing.css";
 
 export type Plan = {code: string; name: string; amount: string; currency: string; trial_days: number};
@@ -50,7 +51,22 @@ function safeCheckoutTarget(checkoutUrl: string) {
   try {
     if (typeof checkoutUrl !== "string") throw new Error("unsafe target");
     const target = new URL(checkoutUrl, window.location.origin);
-    if (target.protocol !== "http:" && target.protocol !== "https:") throw new Error("unsafe protocol");
+    const isRelativeStatusRoute = checkoutUrl.startsWith("/")
+      && target.origin === window.location.origin
+      && /^\/checkout\/(concluido|cancelado|expirado)$/.test(target.pathname)
+      && !target.search
+      && !target.hash;
+    const allowedOrigins = new Set(
+      (import.meta.env.VITE_ASAAS_CHECKOUT_ORIGINS ?? "")
+        .split(",")
+        .map(origin => origin.trim())
+        .filter(Boolean),
+    );
+    const isAllowedProviderRoute = target.protocol === "https:"
+      && allowedOrigins.has(target.origin)
+      && !target.username
+      && !target.password;
+    if (!isRelativeStatusRoute && !isAllowedProviderRoute) throw new Error("unsafe target");
     return target.href;
   } catch {
     throw new Error("Link de pagamento inválido. Tente novamente.");
@@ -206,12 +222,12 @@ export function CheckoutStatusPage({path}: {path: keyof typeof checkoutCopy}) {
   const copy = checkoutCopy[path];
   usePageMetadata(`${copy.title} | M&R BarberHub`, copy.text, path);
   const Icon = copy.icon;
-  return <BillingShell><section className="billing-state"><div className="billing-state-icon"><Icon/></div><p>{copy.eyebrow}</p><h1>{copy.title}</h1><span>{copy.text}</span><a className="billing-primary" href={path === "/checkout/concluido" ? "/login" : "/cadastro"}>{path === "/checkout/concluido" ? "Ir para login" : "Começar teste grátis"}</a><a className="billing-secondary-link" href="/">Voltar ao início</a></section></BillingShell>;
+  return <BillingShell><section className="billing-state"><div className="billing-state-icon"><Icon/></div><p>{copy.eyebrow}</p><h1>{copy.title}</h1><span>{copy.text}</span><a className="billing-primary" href={path === "/checkout/concluido" ? "/login" : "/regularizar"}>{path === "/checkout/concluido" ? "Ir para login" : "Recuperar checkout por e-mail"}</a><a className="billing-secondary-link" href="/">Voltar ao início</a></section></BillingShell>;
 }
 
 export function RegularizationPage() {
-  usePageMetadata("Regularizar assinatura | M&R BarberHub", "Solicite instruções ou regularize sua assinatura com segurança.", "/regularizar");
-  const token = new URLSearchParams(window.location.search).get("token");
+  usePageMetadata("Regularizar assinatura | M&R BarberHub", "Solicite instruções ou regularize sua assinatura com segurança.", "/regularizar", "noindex, nofollow");
+  const token = getRegularizationToken();
   const [email, setEmail] = useState("");
   const request = useMutation({mutationFn: () => api.post<{message: string}>("/billing/regularization/request/", {email}).then(response => response.data)});
   const checkout = useMutation({mutationFn: async () => {

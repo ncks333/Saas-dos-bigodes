@@ -19,6 +19,7 @@ export default defineConfig({
     reuseExistingServer: true,
     env: {
       VITE_MR_SOLUTIONS_WHATSAPP_URL: "https://wa.me/5511999999999?text=Teste",
+      VITE_ASAAS_CHECKOUT_ORIGINS: "https://sandbox.asaas.com",
       ...(turnstileSiteKey ? {VITE_TURNSTILE_SITE_KEY: turnstileSiteKey} : {}),
     },
   },

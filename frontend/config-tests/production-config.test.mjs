@@ -7,12 +7,16 @@ import {validateProductionEnv} from "../scripts/validate-production-env.mjs";
 const valid = {
   VITE_API_URL: "https://api.mrbarberhub.com.br/api/v1",
   VITE_TURNSTILE_SITE_KEY: "0x4AAAAAAAaBbCcDdEeFfGgHhIiJjKkLl",
+  VITE_ASAAS_CHECKOUT_ORIGINS: "https://asaas.com,https://www.asaas.com",
   VITE_MR_SOLUTIONS_WHATSAPP_URL: "https://wa.me/5511999999999?text=Teste",
 };
 
 const root = new URL("../", import.meta.url);
 const vercel = JSON.parse(readFileSync(new URL("vercel.json", root), "utf8"));
 const appSource = readFileSync(new URL("src/App.tsx", root), "utf8");
+const mainSource = readFileSync(new URL("src/main.tsx", root), "utf8");
+const billingSource = readFileSync(new URL("src/BillingPages.tsx", root), "utf8");
+const indexHtml = readFileSync(new URL("index.html", root), "utf8");
 const repositoryRoot = new URL("../../", import.meta.url);
 const dockerfile = readFileSync(new URL("frontend/Dockerfile", repositoryRoot), "utf8");
 const compose = readFileSync(new URL("docker-compose.yml", repositoryRoot), "utf8");
@@ -36,7 +40,7 @@ const readmeCommands = [...readme.matchAll(/```(?:bash|powershell)\r?\n([\s\S]*?
   .flatMap(match => match[1].split(/\r?\n/))
   .map(command => command.trim())
   .filter(Boolean);
-const localViteEnv = "VITE_API_URL=http://localhost:8000/api/v1 VITE_TURNSTILE_SITE_KEY=1x00000000000000000000AA VITE_MR_SOLUTIONS_WHATSAPP_URL=https://wa.me/5511999999999?text=Teste";
+const localViteEnv = "VITE_API_URL=http://localhost:8000/api/v1 VITE_TURNSTILE_SITE_KEY=1x00000000000000000000AA VITE_ASAAS_CHECKOUT_ORIGINS=https://sandbox.asaas.com VITE_MR_SOLUTIONS_WHATSAPP_URL=https://wa.me/5511999999999?text=Teste";
 
 test("accepts canonical public production URLs", () => {
   assert.doesNotThrow(() => validateProductionEnv(valid));
@@ -54,6 +58,21 @@ test("rejects missing or blank Turnstile site key", () => {
     assert.throws(
       () => validateProductionEnv({...valid, VITE_TURNSTILE_SITE_KEY: value}),
       /VITE_TURNSTILE_SITE_KEY/,
+    );
+  }
+});
+
+test("production accepts only exact HTTPS Asaas checkout origins", () => {
+  for (const value of [
+    "",
+    "http://asaas.com",
+    "https://evil.example",
+    "https://asaas.com/path",
+    "https://sandbox.asaas.com",
+  ]) {
+    assert.throws(
+      () => validateProductionEnv({...valid, VITE_ASAAS_CHECKOUT_ORIGINS: value}),
+      /VITE_ASAAS_CHECKOUT_ORIGINS/,
     );
   }
 });
@@ -77,6 +96,37 @@ test("Vercel serves the M&R Solutions SPA route", () => {
   ));
 });
 
+test("Vercel serves every direct SPA route through a safe fallback", () => {
+  const fallback = vercel.rewrites.find(item => item.source === "/(.*)");
+  assert.deepEqual(fallback, {source: "/(.*)", destination: "/index.html"});
+  for (const route of [
+    "/cadastro",
+    "/regularizar",
+    "/checkout/concluido",
+    "/checkout/cancelado",
+    "/checkout/expirado",
+  ]) {
+    assert.ok(fallback.source === "/(.*)", `missing SPA fallback for ${route}`);
+  }
+});
+
+test("regularization capability route has private anti-leak headers and metadata", () => {
+  const routeHeaders = vercel.headers.find(item => item.source === "/regularizar");
+  const values = Object.fromEntries(routeHeaders.headers.map(header => [header.key, header.value]));
+  assert.equal(values["Cache-Control"], "private, no-store");
+  assert.equal(values["Referrer-Policy"], "no-referrer");
+  assert.equal(values["X-Robots-Tag"], "noindex, nofollow");
+  assert.match(indexHtml, /<meta name="referrer" content="no-referrer"/);
+  assert.match(billingSource, /"noindex, nofollow"/);
+});
+
+test("regularization token is removed before PostHog can initialize", () => {
+  const scrub = mainSource.indexOf("extractRegularizationToken");
+  const analytics = mainSource.indexOf("posthog.init");
+  assert.ok(scrub >= 0 && analytics >= 0 && scrub < analytics);
+  assert.match(mainSource, /regularizar.*posthog/s);
+});
+
 test("CSP allows only the exact globe texture origin", () => {
   const csp = vercel.headers
     .flatMap(item => item.headers)
@@ -91,6 +141,11 @@ test("development globe route is not published", () => {
 test("Docker frontend build receives the validated WhatsApp URL", () => {
   assert.match(dockerfile, /^ARG VITE_MR_SOLUTIONS_WHATSAPP_URL$/m);
   assert.match(dockerfile, /VITE_MR_SOLUTIONS_WHATSAPP_URL=\$VITE_MR_SOLUTIONS_WHATSAPP_URL/);
+});
+
+test("Docker frontend build receives public checkout origin allowlist", () => {
+  assert.match(dockerfile, /^ARG VITE_ASAAS_CHECKOUT_ORIGINS$/m);
+  assert.match(dockerfile, /VITE_ASAAS_CHECKOUT_ORIGINS=\$VITE_ASAAS_CHECKOUT_ORIGINS/);
 });
 
 test("Compose provides only a fictitious development WhatsApp fixture", () => {
@@ -223,5 +278,5 @@ test("frontend production validator accepts only VITE public values", () => {
     }),
     /VITE_API_URL/,
   );
-  assert.doesNotMatch(productionEnvValidator, /ASAAS_|RESEND_API_KEY/);
+  assert.doesNotMatch(productionEnvValidator, /ASAAS_API_KEY|ASAAS_WEBHOOK_TOKEN|RESEND_API_KEY/);
 });

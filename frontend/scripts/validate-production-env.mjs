@@ -7,6 +7,26 @@ export function validateProductionEnv(env) {
     throw new Error("VITE_TURNSTILE_SITE_KEY deve ser configurada para o build de produção.");
   }
 
+  const checkoutOrigins = typeof env.VITE_ASAAS_CHECKOUT_ORIGINS === "string"
+    ? env.VITE_ASAAS_CHECKOUT_ORIGINS.split(",").map(value => value.trim()).filter(Boolean)
+    : [];
+  const productionCheckoutOrigins = new Set(["https://asaas.com", "https://www.asaas.com"]);
+  if (
+    checkoutOrigins.length === 0
+    || checkoutOrigins.some(value => {
+      try {
+        const url = new URL(value);
+        return url.protocol !== "https:"
+          || url.origin !== value
+          || !productionCheckoutOrigins.has(value);
+      } catch {
+        return true;
+      }
+    })
+  ) {
+    throw new Error("VITE_ASAAS_CHECKOUT_ORIGINS deve conter somente origens HTTPS oficiais do Asaas em produção.");
+  }
+
   const raw = env.VITE_MR_SOLUTIONS_WHATSAPP_URL;
   if (!raw) {
     throw new Error("VITE_MR_SOLUTIONS_WHATSAPP_URL deve ser configurada para o build de produção.");

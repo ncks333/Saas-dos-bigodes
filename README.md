@@ -37,7 +37,7 @@ Sem Docker, instale Python 3.13, PostgreSQL, Redis e Node 22; depois instale `ba
 ```bash
 cd frontend
 npm install
-VITE_API_URL=http://localhost:8000/api/v1 VITE_TURNSTILE_SITE_KEY=1x00000000000000000000AA VITE_MR_SOLUTIONS_WHATSAPP_URL=https://wa.me/5511999999999?text=Teste npm run dev
+VITE_API_URL=http://localhost:8000/api/v1 VITE_TURNSTILE_SITE_KEY=1x00000000000000000000AA VITE_ASAAS_CHECKOUT_ORIGINS=https://sandbox.asaas.com VITE_MR_SOLUTIONS_WHATSAPP_URL=https://wa.me/5511999999999?text=Teste npm run dev
 ```
 
 ## Testes e qualidade
@@ -46,7 +46,7 @@ VITE_API_URL=http://localhost:8000/api/v1 VITE_TURNSTILE_SITE_KEY=1x000000000000
 docker compose run --rm backend pytest
 docker compose run --rm backend ruff check .
 cd frontend
-VITE_API_URL=http://localhost:8000/api/v1 VITE_TURNSTILE_SITE_KEY=1x00000000000000000000AA VITE_MR_SOLUTIONS_WHATSAPP_URL=https://wa.me/5511999999999?text=Teste npm run build
+VITE_API_URL=http://localhost:8000/api/v1 VITE_TURNSTILE_SITE_KEY=1x00000000000000000000AA VITE_ASAAS_CHECKOUT_ORIGINS=https://sandbox.asaas.com VITE_MR_SOLUTIONS_WHATSAPP_URL=https://wa.me/5511999999999?text=Teste npm run build
 CHOKIDAR_USEPOLLING=true npm run test:e2e
 ```
 

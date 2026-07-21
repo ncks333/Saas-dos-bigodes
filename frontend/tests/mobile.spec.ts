@@ -353,6 +353,16 @@ test("cadastro rejeita checkout inseguro", async ({page}) => {
   await expect(page.getByRole("alert")).toContainText("Link de pagamento inválido");
 });
 
+test("cadastro rejeita HTTPS fora das origens Asaas configuradas", async ({page}) => {
+  await page.route("**/api/v1/billing/plans/current/", route => route.fulfill({json: currentPlan}));
+  await page.route("**/api/v1/billing/signup/", route => route.fulfill({status: 201, json: {checkout_url: "https://evil.example/checkout/chk_1"}}));
+  await page.goto("/cadastro");
+  await fillSignup(page);
+  await page.getByRole("button", {name: /Começar 30 dias grátis/}).click();
+  await expect(page).toHaveURL(/\/cadastro$/);
+  await expect(page.getByRole("alert")).toContainText("Link de pagamento inválido");
+});
+
 test("login bloqueado oferece regularização para erro direto e envelope", async ({page}) => {
   let envelope = false;
   await page.route("**/api/v1/auth/login/", route => route.fulfill({
@@ -384,9 +394,21 @@ test("regularização solicita email ou usa checkout seguro de token", async ({p
   await expect(page.getByRole("status")).toContainText("instruções");
 
   await page.route("**/api/v1/billing/regularization/checkout/", route => route.fulfill({json: {checkout_url: "/checkout/concluido"}}));
-  await page.goto("/regularizar?token=assinatura-segura");
+  await page.goto("/regularizar?token=assinatura-segura&utm_source=email");
+  await expect(page).toHaveURL(/\/regularizar\?utm_source=email$/);
   await page.getByRole("button", {name: /Regularizar assinatura/}).click();
   await expect(page).toHaveURL(/\/checkout\/concluido$/);
+});
+
+test("regularização remove token antes de qualquer carregamento de analytics", async ({page}) => {
+  const analyticsRequests: string[] = [];
+  page.on("request", request => {
+    if (request.url().includes("posthog")) analyticsRequests.push(request.url());
+  });
+  await page.goto("/regularizar?token=capacidade-secreta");
+  await expect(page).toHaveURL(/\/regularizar$/);
+  await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", "noindex, nofollow");
+  expect(analyticsRequests).toEqual([]);
 });
 
 test("checkout informa espera por confirmação do provedor", async ({page}) => {
@@ -394,6 +416,14 @@ test("checkout informa espera por confirmação do provedor", async ({page}) => 
     await page.goto(path);
     await expect(page.getByText(/confirmação do provedor/i)).toBeVisible();
     await noHorizontalOverflow(page);
+  }
+});
+
+test("checkout cancelado ou expirado recupera por email sem duplicar signup", async ({page}) => {
+  for (const path of ["/checkout/cancelado", "/checkout/expirado"]) {
+    await page.goto(path);
+    await expect(page.getByRole("link", {name: /Recuperar checkout por e-mail/})).toHaveAttribute("href", "/regularizar");
+    await expect(page.getByRole("link", {name: /Começar teste grátis/})).toHaveCount(0);
   }
 });
 
@@ -457,6 +487,8 @@ test("Turnstile falho mostra recuperação e permite nova tentativa", async ({pa
   await page.route("**/api/v1/billing/plans/current/", route => route.fulfill({json: currentPlan}));
   await page.goto("/cadastro");
   await expect(page.getByRole("alert")).toContainText("Não foi possível carregar a verificação anti-bot.");
+  const retryBounds = await page.getByRole("button", {name: "Tentar novamente"}).evaluate(element => element.getBoundingClientRect());
+  expect(retryBounds.height).toBeGreaterThanOrEqual(44);
   await page.evaluate(() => {
     window.turnstile = {render: (_element, options) => { options.callback("turnstile-test-token"); return "turnstile-test-widget"; }};
   });
