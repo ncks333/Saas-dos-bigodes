@@ -9,7 +9,11 @@ from apps.accounts.models import User
 from apps.audit.models import AuditEvent
 from apps.barbershops.models import Barbershop, OperatingHour
 from apps.billing.models import Subscription, SubscriptionPlan
-from apps.billing.providers.asaas import AsaasCheckoutError, CheckoutResult
+from apps.billing.providers.asaas import (
+    AsaasCheckoutError,
+    AsaasCheckoutOutcomeUnknownError,
+    CheckoutResult,
+)
 from apps.billing.services import provision_signup
 
 
@@ -214,6 +218,26 @@ def test_signup_rejects_failed_turnstile_without_provider_or_tenant(
     assert Barbershop.objects.count() == 0
     assert User.objects.count() == 0
     assert Subscription.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_signup_unknown_checkout_outcome_persists_reconciliation_record(
+    plan, monkeypatch
+):
+    monkeypatch.setattr(
+        "apps.billing.services.create_recurring_checkout",
+        lambda *_args: (_ for _ in ()).throw(
+            AsaasCheckoutOutcomeUnknownError("timeout")
+        ),
+    )
+
+    with pytest.raises(AsaasCheckoutOutcomeUnknownError, match="timeout"):
+        provision_signup(signup_payload(), plan)
+
+    subscription = Subscription.objects.get(barbershop__slug="barbearia-joao")
+    assert subscription.status == Subscription.Status.PENDING_CHECKOUT
+    assert subscription.signup_checkout_state == "RECONCILIATION_REQUIRED"
+    assert subscription.provider_checkout_id == ""
 
 
 @pytest.mark.django_db

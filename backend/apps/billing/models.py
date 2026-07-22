@@ -39,6 +39,11 @@ class Subscription(TimestampedModel):
         PAID = "PAID", "Pago"
         RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED", "Reconciliação necessária"
 
+    class SignupCheckoutState(models.TextChoices):
+        CREATING = "CREATING", "Criando"
+        CREATED = "CREATED", "Criado"
+        RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED", "Reconciliação necessária"
+
     barbershop = models.OneToOneField("barbershops.Barbershop", on_delete=models.CASCADE, related_name="subscription")
     plan = models.ForeignKey(SubscriptionPlan, on_delete=models.PROTECT, related_name="subscriptions")
     status = models.CharField(max_length=24, choices=Status.choices, default=Status.PENDING_CHECKOUT)
@@ -46,6 +51,11 @@ class Subscription(TimestampedModel):
     provider_customer_id = models.CharField(max_length=100, blank=True)
     provider_subscription_id = models.CharField(max_length=100, blank=True, db_index=True)
     provider_checkout_id = models.CharField(max_length=100, blank=True)
+    signup_checkout_state = models.CharField(
+        max_length=24,
+        choices=SignupCheckoutState.choices,
+        default=SignupCheckoutState.CREATING,
+    )
     regularization_checkout_state = models.CharField(
         max_length=24,
         choices=RegularizationCheckoutState.choices,

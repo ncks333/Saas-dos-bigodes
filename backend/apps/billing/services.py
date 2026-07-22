@@ -555,56 +555,75 @@ def cancel_subscription_from_webhook(event):
 
 
 def provision_signup(data, plan, *, request=None):
-    checkout = None
+    with transaction.atomic():
+        barbershop = Barbershop.objects.create(
+            name=data["barbershop_name"],
+            slug=data["slug"],
+            whatsapp=data["whatsapp"],
+        )
+        for weekday in range(6):
+            OperatingHour.objects.create(
+                barbershop=barbershop,
+                weekday=weekday,
+                opens_at=time(8),
+                closes_at=time(18),
+            )
+        user = User.objects.create_user(
+            username=data["username"],
+            email=data["email"],
+            password=data["password"],
+            first_name=data["first_name"],
+            barbershop=barbershop,
+            role=User.Role.ADMIN,
+            is_active=False,
+        )
+        trial_ends_at = timezone.now() + timedelta(days=plan.trial_days)
+        subscription = Subscription.objects.create(
+            barbershop=barbershop,
+            plan=plan,
+            trial_days=plan.trial_days,
+            trial_ends_at=trial_ends_at,
+            next_billing_at=trial_ends_at + timedelta(days=1),
+        )
+        audit_services.record_event(
+            user,
+            "BILLING_SIGNUP_CREATED",
+            target=subscription,
+            request=request,
+        )
     try:
-        with transaction.atomic():
-            barbershop = Barbershop.objects.create(
-                name=data["barbershop_name"],
-                slug=data["slug"],
-                whatsapp=data["whatsapp"],
+        checkout = create_recurring_checkout(subscription, user)
+    except AsaasCheckoutOutcomeUnknownError:
+        Subscription.objects.filter(pk=subscription.pk).update(
+            signup_checkout_state=(
+                Subscription.SignupCheckoutState.RECONCILIATION_REQUIRED
             )
-            for weekday in range(6):
-                OperatingHour.objects.create(
-                    barbershop=barbershop,
-                    weekday=weekday,
-                    opens_at=time(8),
-                    closes_at=time(18),
-                )
-            user = User.objects.create_user(
-                username=data["username"],
-                email=data["email"],
-                password=data["password"],
-                first_name=data["first_name"],
-                barbershop=barbershop,
-                role=User.Role.ADMIN,
-                is_active=False,
-            )
-            trial_ends_at = timezone.now() + timedelta(days=plan.trial_days)
-            subscription = Subscription.objects.create(
-                barbershop=barbershop,
-                plan=plan,
-                trial_days=plan.trial_days,
-                trial_ends_at=trial_ends_at,
-                next_billing_at=trial_ends_at + timedelta(days=1),
-            )
-            audit_services.record_event(
-                user,
-                "BILLING_SIGNUP_CREATED",
-                target=subscription,
-                request=request,
-            )
-            checkout = create_recurring_checkout(subscription, user)
-            validate_checkout_url(checkout.url)
-            subscription.provider_checkout_id = checkout.id
-            subscription.save(update_fields=["provider_checkout_id", "updated_at"])
-        return subscription, checkout
-    except Exception:
-        if checkout is not None:
-            try:
-                cancel_checkout(checkout.id)
-            except Exception:
-                logger.warning("Checkout compensation failed after local signup error")
+        )
         raise
+    except Exception:
+        barbershop.delete()
+        raise
+
+    try:
+        validate_checkout_url(checkout.url)
+        with transaction.atomic():
+            subscription.provider_checkout_id = checkout.id
+            subscription.signup_checkout_state = Subscription.SignupCheckoutState.CREATED
+            subscription.save(
+                update_fields=[
+                    "provider_checkout_id",
+                    "signup_checkout_state",
+                    "updated_at",
+                ]
+            )
+    except Exception:
+        try:
+            cancel_checkout(checkout.id)
+        except Exception:
+            logger.warning("Checkout compensation failed after local signup error")
+        barbershop.delete()
+        raise
+    return subscription, checkout
 
 
 def make_regularization_token(subscription):
