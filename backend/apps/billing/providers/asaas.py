@@ -40,7 +40,12 @@ def validate_checkout_url(url: str) -> str:
         raise AsaasCheckoutOutcomeUnknownError(
             "URL de checkout Asaas ausente ou inválida"
         )
-    parsed = urlsplit(url)
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        raise AsaasCheckoutOutcomeUnknownError(
+            "URL de checkout Asaas ausente ou inválida"
+        ) from None
     origin = f"{parsed.scheme}://{parsed.netloc}"
     if (
         parsed.scheme != "https"
