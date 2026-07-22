@@ -25,7 +25,7 @@ THIRD_PARTY_APPS = [
 ]
 LOCAL_APPS = [
     "apps.accounts", "apps.barbershops", "apps.customers", "apps.services",
-    "apps.appointments", "apps.notifications", "apps.reports", "apps.audit",
+    "apps.billing", "apps.appointments", "apps.notifications", "apps.reports", "apps.audit",
 ]
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
@@ -101,7 +101,7 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 20,
     "EXCEPTION_HANDLER": "core.exceptions.handler.api_exception_handler",
     "DEFAULT_THROTTLE_CLASSES": ("rest_framework.throttling.AnonRateThrottle", "rest_framework.throttling.UserRateThrottle"),
-    "DEFAULT_THROTTLE_RATES": {"anon": "100/hour", "user": "1000/hour", "login": "5/15m", "password_reset": "5/hour", "public_booking": "10/hour"},
+    "DEFAULT_THROTTLE_RATES": {"anon": "100/hour", "user": "1000/hour", "login": "5/15m", "password_reset": "5/hour", "public_booking": "10/hour", "billing_regularization_request": "5/hour", "billing_regularization_checkout": "5/hour"},
 }
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
@@ -125,7 +125,23 @@ CELERY_BEAT_SCHEDULE = {
     "appointment-reminders-every-10-minutes": {
         "task": "apps.notifications.tasks.enqueue_due_reminders",
         "schedule": 600.0,
-    }
+    },
+    "billing-webhook-recovery-every-minute": {
+        "task": "apps.billing.tasks.redispatch_unprocessed_billing_webhooks",
+        "schedule": 60.0,
+    },
+    "billing-notification-recovery-every-minute": {
+        "task": "apps.billing.tasks.recover_billing_notification_emails",
+        "schedule": 60.0,
+    },
+    "billing-regularization-request-recovery-every-minute": {
+        "task": "apps.billing.tasks.recover_regularization_email_requests",
+        "schedule": 60.0,
+    },
+    "billing-lifecycle-sweep-hourly": {
+        "task": "apps.billing.tasks.sweep_subscription_lifecycle",
+        "schedule": 3600.0,
+    },
 }
 
 def env_list(name: str, default: str = "") -> list[str]:
@@ -138,6 +154,17 @@ EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.console.Em
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "nao-responda@bigodes.local")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+ASAAS_API_URL = os.getenv("ASAAS_API_URL", "https://api-sandbox.asaas.com/v3")
+ASAAS_CHECKOUT_BASE_URL = os.getenv("ASAAS_CHECKOUT_BASE_URL", "https://sandbox.asaas.com/checkoutSession/show")
+ASAAS_CHECKOUT_ALLOWED_ORIGINS = env_list(
+    "ASAAS_CHECKOUT_ALLOWED_ORIGINS",
+    "https://sandbox.asaas.com",
+)
+ASAAS_API_KEY = os.getenv("ASAAS_API_KEY", "")
+ASAAS_WEBHOOK_TOKEN = os.getenv("ASAAS_WEBHOOK_TOKEN", "")
+ASAAS_CHECKOUT_EXPIRES_MINUTES = int(os.getenv("ASAAS_CHECKOUT_EXPIRES_MINUTES", "60"))
+ASAAS_PROVIDER_TIMEZONE = os.getenv("ASAAS_PROVIDER_TIMEZONE", "America/Sao_Paulo")
+BILLING_PUBLIC_PLAN_CODE = os.getenv("BILLING_PUBLIC_PLAN_CODE", "barberhub")
 PASSWORD_RESET_TIMEOUT = int(os.getenv("PASSWORD_RESET_TIMEOUT", "3600"))
 EMAIL_HOST = os.getenv("EMAIL_HOST", "")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))

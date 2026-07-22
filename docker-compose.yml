@@ -64,6 +64,7 @@ services:
       args:
         VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api/v1}
         VITE_TURNSTILE_SITE_KEY: ${VITE_TURNSTILE_SITE_KEY:-}
+        VITE_ASAAS_CHECKOUT_ORIGINS: ${VITE_ASAAS_CHECKOUT_ORIGINS:-https://sandbox.asaas.com}
         VITE_MR_SOLUTIONS_WHATSAPP_URL: ${VITE_MR_SOLUTIONS_WHATSAPP_URL:-https://wa.me/5511999999999?text=Teste}
     restart: unless-stopped
     ports: ["5173:80"]

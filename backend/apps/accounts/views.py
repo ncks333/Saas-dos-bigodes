@@ -8,15 +8,19 @@ from django.utils.encoding import force_bytes
 from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
 from rest_framework import serializers, status, viewsets
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, BlacklistedToken
 
 from apps.audit.services import record_event
-from core.permissions.roles import IsAdminRole
+from apps.billing.access import user_has_subscription_access
+from core.permissions.roles import IsAdminRole, IsTenantMember
 from .models import User
 from .serializers import ChangePasswordSerializer, LoginSerializer, UserSerializer
 from .throttles import LoginRateThrottle, PasswordResetRateThrottle
@@ -35,6 +39,25 @@ class LoginView(TokenObtainPairView):
             if user:
                 record_event(user, "LOGIN", request=request)
         return response
+
+
+class SubscriptionTokenRefreshView(TokenRefreshView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        try:
+            refresh = RefreshToken(request.data.get("refresh", ""))
+        except TokenError:
+            return super().post(request, *args, **kwargs)
+        user = User.objects.filter(pk=refresh.get(api_settings.USER_ID_CLAIM)).first()
+        if user is None or not user_has_subscription_access(user):
+            raise PermissionDenied(
+                {
+                    "code": "subscription_required",
+                    "detail": "Assinatura precisa ser regularizada.",
+                }
+            )
+        return super().post(request, *args, **kwargs)
 
 
 class LogoutView(APIView):
@@ -61,7 +84,7 @@ class LogoutAllView(APIView):
 
 
 class ChangePasswordView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsTenantMember]
 
     def post(self, request):
         serializer = ChangePasswordSerializer(data=request.data, context={"request": request})

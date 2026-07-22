@@ -49,6 +49,7 @@ const dateInTimezone = (timezone: string) => {
 };
 const toIso = (value: string) => new Date(value).toISOString();
 const money = (value: string | number) => Number(value).toLocaleString("pt-BR", {style: "currency", currency: "BRL"});
+const trialDaysRemaining = (value?: string | null) => value ? Math.max(0, Math.ceil((new Date(value).getTime() - Date.now()) / 86_400_000)) : 0;
 const findErrorMessage = (value: unknown): string | null => {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
@@ -81,6 +82,16 @@ const loginErrorText = (error: unknown) => {
     return "Usuário ou senha inválidos.";
   }
   return errorText(error);
+};
+const subscriptionRequired = (error: unknown) => {
+  if (!axios.isAxiosError(error)) return false;
+  const containsCode = (value: unknown): boolean => {
+    if (!value || typeof value !== "object") return false;
+    if (Array.isArray(value)) return value.some(containsCode);
+    const record = value as Record<string, unknown>;
+    return record.code === "subscription_required" || Object.values(record).some(containsCode);
+  };
+  return error.response?.status === 403 && containsCode(error.response.data);
 };
 
 function Button({children, variant = "primary", ...props}: React.ButtonHTMLAttributes<HTMLButtonElement> & {variant?: "primary" | "secondary" | "danger" | "ghost"}) {
@@ -116,7 +127,8 @@ function LoginPage({onLogin}: {onLogin: (user: SessionUser) => void}) {
     localStorage.setItem("access", data.access); localStorage.setItem("refresh", data.refresh);
     localStorage.setItem("user", JSON.stringify(data.user)); onLogin(data.user);
   }});
-  return <main className="login-shell"><section className="login-copy"><AppBrandMark/><p className="eyebrow">M&amp;R BarberHub</p><h1>Sua barbearia organizada.<br/><span>Seu tempo de volta.</span></h1><p>Agenda, clientes, equipe e serviços em um painel simples de usar.</p><p className="company-credit">Um produto <strong>M&amp;R Solutions</strong></p></section><section className="login-card"><a className="back-link" href="/">Voltar ao site</a><h2>Bem-vindo</h2><p>Entre para administrar sua barbearia.</p><form onSubmit={e => {e.preventDefault(); login.mutate();}}><label>Usuário<input autoComplete="username" autoFocus value={username} onChange={e => setUsername(e.target.value)}/></label><label>Senha<input autoComplete="current-password" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Sua senha"/></label><a className="forgot-link" href="/recuperar-senha">Esqueci minha senha</a>{login.error && <p className="form-error">{loginErrorText(login.error)}</p>}<Button disabled={!username || password.length < 8 || login.isPending}>{login.isPending ? "Entrando..." : "Entrar"}</Button></form><p className="company-credit login-credit">Tecnologia por <strong>M&amp;R Solutions</strong></p></section></main>;
+  const blocked = subscriptionRequired(login.error);
+  return <main className="login-shell"><section className="login-copy"><AppBrandMark/><p className="eyebrow">M&amp;R BarberHub</p><h1>Sua barbearia organizada.<br/><span>Seu tempo de volta.</span></h1><p>Agenda, clientes, equipe e serviços em um painel simples de usar.</p><p className="company-credit">Um produto <strong>M&amp;R Solutions</strong></p></section><section className="login-card"><a className="back-link" href="/">Voltar ao site</a><h2>Bem-vindo</h2><p>Entre para administrar sua barbearia.</p><form onSubmit={e => {e.preventDefault(); login.mutate();}}><label>Usuário<input autoComplete="username" autoFocus value={username} onChange={e => setUsername(e.target.value)}/></label><label>Senha<input autoComplete="current-password" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Sua senha"/></label><a className="forgot-link" href="/recuperar-senha">Esqueci minha senha</a>{login.error && <p className="form-error">{loginErrorText(login.error)}</p>}{blocked && <a className="regularization-link" href="/regularizar">Regularizar assinatura</a>}<Button disabled={!username || password.length < 8 || login.isPending}>{login.isPending ? "Entrando..." : "Entrar"}</Button></form><p className="company-credit login-credit">Tecnologia por <strong>M&amp;R Solutions</strong></p></section></main>;
 }
 
 const navItems: {page: PageName; label: string; icon: typeof CalendarDays; admin?: boolean}[] = [
@@ -136,7 +148,7 @@ function DashboardPage({go}: {go: (p: PageName) => void}) {
   if (dashboard.isLoading) return <Loading/>;
   const d = dashboard.data ?? {}; const s = summary.data ?? {};
   const remainingToday = (s.confirmed ?? 0) + (s.pending ?? 0) + (s.awaiting ?? 0);
-  return <><PageHeader title="Visão geral" description={`Resumo de ${format(new Date(), "dd/MM/yyyy")}`} action={<div className="header-actions"><Button variant="secondary" onClick={() => {dashboard.refetch(); summary.refetch();}} disabled={dashboard.isFetching || summary.isFetching}>Atualizar</Button><Button onClick={() => go("appointments")}><Plus/> Novo agendamento</Button></div>}/><section className="stats"><article><span>Faturamento hoje</span><strong>{money(d.daily_revenue ?? 0)}</strong><small>{s.completed ?? 0} concluídos</small></article><article><span>Faturamento no mês</span><strong>{money(d.monthly_revenue ?? 0)}</strong><small>Receita confirmada</small></article><article><span>Atendimentos restantes</span><strong>{remainingToday}</strong><small>de {s.total ?? 0} registros hoje</small></article><article><span>Taxa de cancelamento</span><strong>{d.cancellation_rate ?? 0}%</strong><small>{s.cancelled ?? 0} hoje</small></article></section><section className="dashboard-grid"><article className="panel"><h2>Resumo de hoje</h2><div className="summary-list"><div><span>Aguardando</span><strong>{s.awaiting ?? 0}</strong></div><div><span>Confirmados</span><strong>{s.confirmed ?? 0}</strong></div><div><span>Pendentes</span><strong>{s.pending ?? 0}</strong></div><div><span>Concluídos</span><strong>{s.completed ?? 0}</strong></div><div><span>Cancelados</span><strong>{s.cancelled ?? 0}</strong></div><div><span>Não compareceu</span><strong>{s.no_show ?? 0}</strong></div></div></article><article className="panel"><h2>Horários mais procurados</h2>{d.popular_hours?.length ? <div className="ranking">{d.popular_hours.map((x: {hour: number; total: number}, i: number) => <div key={x.hour}><span>{String(x.hour).padStart(2, "0")}:00</span><div style={{width: `${Math.max(12, 100 - i * 16)}%`}}/><strong>{x.total}</strong></div>)}</div> : <Empty>Ainda não há dados suficientes.</Empty>}</article></section></>;
+  return <><PageHeader title="Visão geral" description={`Resumo de ${format(new Date(), "dd/MM/yyyy")}`} action={<div className="header-actions"><Button variant="secondary" onClick={() => {dashboard.refetch(); summary.refetch();}} disabled={dashboard.isFetching || summary.isFetching}>Atualizar</Button><Button onClick={() => go("appointments")}><Plus/> Novo agendamento</Button></div>}/>{d.subscription_status === "TRIAL" && <p className="trial-notice" role="status">Teste grátis: faltam {trialDaysRemaining(d.trial_ends_at)} dias</p>}<section className="stats"><article><span>Faturamento hoje</span><strong>{money(d.daily_revenue ?? 0)}</strong><small>{s.completed ?? 0} concluídos</small></article><article><span>Faturamento no mês</span><strong>{money(d.monthly_revenue ?? 0)}</strong><small>Receita confirmada</small></article><article><span>Atendimentos restantes</span><strong>{remainingToday}</strong><small>de {s.total ?? 0} registros hoje</small></article><article><span>Taxa de cancelamento</span><strong>{d.cancellation_rate ?? 0}%</strong><small>{s.cancelled ?? 0} hoje</small></article></section><section className="dashboard-grid"><article className="panel"><h2>Resumo de hoje</h2><div className="summary-list"><div><span>Aguardando</span><strong>{s.awaiting ?? 0}</strong></div><div><span>Confirmados</span><strong>{s.confirmed ?? 0}</strong></div><div><span>Pendentes</span><strong>{s.pending ?? 0}</strong></div><div><span>Concluídos</span><strong>{s.completed ?? 0}</strong></div><div><span>Cancelados</span><strong>{s.cancelled ?? 0}</strong></div><div><span>Não compareceu</span><strong>{s.no_show ?? 0}</strong></div></div></article><article className="panel"><h2>Horários mais procurados</h2>{d.popular_hours?.length ? <div className="ranking">{d.popular_hours.map((x: {hour: number; total: number}, i: number) => <div key={x.hour}><span>{String(x.hour).padStart(2, "0")}:00</span><div style={{width: `${Math.max(12, 100 - i * 16)}%`}}/><strong>{x.total}</strong></div>)}</div> : <Empty>Ainda não há dados suficientes.</Empty>}</article></section></>;
 }
 
 function CustomersPage() {
@@ -235,7 +247,7 @@ function SettingsPage() {
 function SearchBox({value,setValue,placeholder}:{value:string;setValue:(v:string)=>void;placeholder:string}) {return <div className="search-box"><Search/><input value={value} onChange={e=>setValue(e.target.value)} placeholder={placeholder}/></div>}
 function Toggle({checked,setChecked,children}:{checked:boolean;setChecked:(v:boolean)=>void;children:ReactNode}) {return <label className="toggle"><input type="checkbox" checked={checked} onChange={e=>setChecked(e.target.checked)}/><span/>{children}</label>}
 
-declare global {interface Window {turnstile?: {render:(element:HTMLElement,options:{sitekey:string;callback:(token:string)=>void})=>string}}}
+declare global {interface Window {turnstile?: {render:(element:HTMLElement,options:{sitekey:string;callback:(token:string)=>void;"error-callback"?:()=>void;"expired-callback"?:()=>void})=>string}}}
 function PublicBooking({slug}:{slug:string}) {
   usePageMetadata("Agendamento online | M&R BarberHub", "Escolha serviço, data e horário para solicitar seu atendimento.", `/agendar/${slug}`);
   const [service,setService]=useState(""); const [day,setDay]=useState(format(new Date(),"yyyy-MM-dd")); const [slot,setSlot]=useState(""); const [name,setName]=useState(""); const [whatsapp,setWhatsapp]=useState(""); const [privacyAccepted,setPrivacyAccepted]=useState(false); const [captcha,setCaptcha]=useState(import.meta.env.VITE_TURNSTILE_SITE_KEY ? "" : "development"); const captchaRef=useRef<HTMLDivElement>(null);

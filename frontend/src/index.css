@@ -44,6 +44,7 @@ h1, h2, h3, p { margin-top: 0; }
 .back-link, .forgot-link { color: var(--gold-2); font-size: 12px; }
 .back-link { display: inline-block; margin-bottom: 22px; }
 .forgot-link { justify-self: end; margin-top: -8px; }
+.regularization-link { color: #f5c557; font-size: 13px; font-weight: 800; text-align: center; }
 .company-credit { margin: 26px 0 0; color: #74756e !important; font-size: 11px !important; letter-spacing: .04em; }
 .company-credit strong { color: var(--gold); font-weight: 700; }
 .login-credit, .public-credit { text-align: center; }
@@ -72,6 +73,7 @@ h1, h2, h3, p { margin-top: 0; }
 .page-header h1 { font: 800 34px "Sora", sans-serif; margin-bottom: 6px; }
 .page-header p { color: #888981; margin: 0; }
 .header-actions { display: flex; gap: 9px; }
+.trial-notice { margin: -14px 0 22px; padding: 11px 14px; border: 1px solid #d4af3759; border-radius: 8px; background: #d4af3712; color: var(--gold-2); font-size: 14px; font-weight: 700; }
 
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
 .stats article, .panel { background: linear-gradient(145deg, #1b1b1b, #111); border: 1px solid #ffffff18; border-radius: 8px; padding: 21px; }

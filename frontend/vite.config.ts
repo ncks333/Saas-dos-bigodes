@@ -5,8 +5,12 @@ import {validateProductionEnv} from "./scripts/validate-production-env.mjs";
 
 export default defineConfig(({command, mode}) => {
   const env = loadEnv(mode, process.cwd(), "");
+  const turnstileSiteKey = process.env.VITE_TURNSTILE_SITE_KEY ?? env.VITE_TURNSTILE_SITE_KEY ?? "";
   if (command === "build") validateProductionEnv(env);
   return {
+    define: {
+      "import.meta.env.VITE_TURNSTILE_SITE_KEY": JSON.stringify(turnstileSiteKey),
+    },
     plugins: [react()],
     resolve: {
       alias: {

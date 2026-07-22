@@ -1,1 +1,1 @@
-{"root":["./src/App.tsx","./src/MarketingPages.tsx","./src/PasswordResetPages.tsx","./src/ProductApp.tsx","./src/api.ts","./src/main.tsx","./src/metadata.ts","./src/useDebouncedValue.ts","./src/vite-env.d.ts","./src/components/ui/globe.tsx"],"version":"5.8.3"}
+{"root":["./src/App.tsx","./src/BillingPages.tsx","./src/MarketingPages.tsx","./src/PasswordResetPages.tsx","./src/ProductApp.tsx","./src/api.ts","./src/main.tsx","./src/metadata.ts","./src/regularizationToken.ts","./src/useDebouncedValue.ts","./src/vite-env.d.ts","./src/components/ui/globe.tsx"],"version":"5.8.3"}

@@ -3,9 +3,13 @@ import ReactDOM from "react-dom/client";
 import {QueryClient, QueryClientProvider} from "@tanstack/react-query";
 import App from "./App";
 import "./index.css";
+import {extractRegularizationToken} from "./regularizationToken";
+
+const regularizationCapabilityRoute = location.pathname.replace(/\/+$/, "") === "/regularizar";
+extractRegularizationToken();
 
 const posthogKey = import.meta.env.VITE_POSTHOG_KEY;
-if (posthogKey) {
+if (posthogKey && !regularizationCapabilityRoute) {
   void import("posthog-js").then(({default: posthog}) => {
     posthog.init(posthogKey, {
       api_host: import.meta.env.VITE_POSTHOG_HOST ?? "https://us.i.posthog.com",
