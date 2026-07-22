@@ -28,21 +28,21 @@
 - Consumes: `create_recurring_checkout(subscription, user) -> CheckoutResult`
 - Produces: POST para `/checkouts` sem chave `customerData`.
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
 
 No dicionário esperado em `test_checkout_uses_server_plan_and_credit_card`, remover bloco `customerData` com nome, email e telefone.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `docker compose run --rm backend pytest tests/test_asaas_provider.py::test_checkout_uses_server_plan_and_credit_card -q`
 
 Expected: FAIL porque payload atual ainda inclui `customerData`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Remover bloco `customerData` de `backend/apps/billing/providers/asaas.py`. Manter todos outros campos de payload intactos.
 
-- [ ] **Step 4: Run focused and full provider tests**
+- [x] **Step 4: Run focused and full provider tests**
 
 Run: `docker compose run --rm backend pytest tests/test_asaas_provider.py -q`
 
@@ -50,7 +50,7 @@ Run: `docker compose run --rm backend ruff check .`
 
 Expected: tests and Ruff pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Run: `git add backend/apps/billing/providers/asaas.py backend/tests/test_asaas_provider.py`
 
@@ -65,7 +65,7 @@ Run: `git commit -m "fix: let Asaas checkout collect payer data"`
 - Consumes: formulário em `http://localhost:5174/cadastro` e Asaas Sandbox.
 - Produces: URL hospedada Sandbox em vez de “Checkout indisponível”.
 
-- [ ] **Step 1: Recriar backend local**
+- [x] **Step 1: Recriar backend local**
 
 Run: `docker compose up -d --force-recreate backend worker beat`
 
