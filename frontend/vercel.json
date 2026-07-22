@@ -6,11 +6,7 @@
   "rewrites": [
     {"source": "/favicon.ico", "destination": "/favicon.svg"},
     {"source": "/mr-solutions", "destination": "/index.html"},
-    {"source": "/agendar/(.*)", "destination": "/index.html"},
-    {"source": "/login", "destination": "/index.html"},
-    {"source": "/privacidade", "destination": "/index.html"},
-    {"source": "/recuperar-senha", "destination": "/index.html"},
-    {"source": "/redefinir-senha", "destination": "/index.html"}
+    {"source": "/(.*)", "destination": "/index.html"}
   ],
   "headers": [
     {
@@ -28,6 +24,14 @@
       "source": "/assets/(.*)",
       "headers": [
         {"key": "Cache-Control", "value": "public, max-age=31536000, immutable"}
+      ]
+    },
+    {
+      "source": "/regularizar",
+      "headers": [
+        {"key": "Cache-Control", "value": "private, no-store"},
+        {"key": "Referrer-Policy", "value": "no-referrer"},
+        {"key": "X-Robots-Tag", "value": "noindex, nofollow"}
       ]
     },
     {

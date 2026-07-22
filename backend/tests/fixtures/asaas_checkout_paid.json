@@ -1,0 +1,43 @@
+{
+  "id": "evt_37260be8159d4472b4458d3de13efc2d&15370",
+  "event": "CHECKOUT_PAID",
+  "dateCreated": "2024-10-31 18:07:47",
+  "account": {
+    "id": "47ed0d25-f9fb-4b35-b23a-d8895caf92b7",
+    "ownerId": null
+  },
+  "checkout": {
+    "id": "2bd251f0-09b2-44ff-8a0c-a5cb29e5bbda",
+    "link": null,
+    "status": "PAID",
+    "minutesToExpire": 10,
+    "billingTypes": [
+      "CREDIT_CARD"
+    ],
+    "chargeTypes": [
+      "RECURRENT"
+    ],
+    "callback": {
+      "cancelUrl": "https://app.example.com/checkout/cancelado",
+      "successUrl": "https://app.example.com/checkout/concluido",
+      "expiredUrl": "https://app.example.com/checkout/expirado"
+    },
+    "items": [
+      {
+        "name": "Plano BarberHub",
+        "description": "Assinatura mensal",
+        "quantity": 1,
+        "value": 79.9
+      }
+    ],
+    "subscription": {
+      "cycle": "MONTHLY",
+      "nextDueDate": "2024-11-30T03:00:00+0000",
+      "endDate": null
+    },
+    "installment": null,
+    "split": [],
+    "customer": "cus_000000018936",
+    "customerData": null
+  }
+}

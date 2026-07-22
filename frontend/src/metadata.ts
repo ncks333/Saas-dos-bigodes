@@ -1,6 +1,11 @@
 import {useEffect} from "react";
 
-export function usePageMetadata(title: string, description: string, path: string) {
+export function usePageMetadata(
+  title: string,
+  description: string,
+  path: string,
+  robots?: string,
+) {
   useEffect(() => {
     document.title = title;
     const descriptionMeta = document.querySelector<HTMLMetaElement>('meta[name="description"]');
@@ -11,5 +16,14 @@ export function usePageMetadata(title: string, description: string, path: string
     ogTitle?.setAttribute("content", title);
     ogDescription?.setAttribute("content", description);
     ogUrl?.setAttribute("content", `https://app.mrbarberhub.com.br${path}`);
-  }, [description, path, title]);
+    let robotsMeta = document.querySelector<HTMLMetaElement>('meta[name="robots"]');
+    if (robots) {
+      if (!robotsMeta) {
+        robotsMeta = document.createElement("meta");
+        robotsMeta.name = "robots";
+        document.head.appendChild(robotsMeta);
+      }
+      robotsMeta.content = robots;
+    }
+  }, [description, path, robots, title]);
 }

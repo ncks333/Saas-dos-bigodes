@@ -47,7 +47,7 @@ Crie dois serviços a partir do mesmo repositório GitHub. Em todos, configure *
 | `barberhub-api` | `/backend/railway.toml` | `api.mrbarberhub.com.br` |
 | `barberhub-jobs` | `/backend/railway.jobs.toml` | nenhum |
 
-Importe em todos os serviços as variáveis de [`.env.production.example`](../backend/.env.production.example). Use variáveis compartilhadas da Railway para evitar divergências.
+Importe em todos os serviços as variáveis de [`.env.production.example`](../backend/.env.production.example). Na Railway, produção usa somente segredos/variáveis protegidas: não cole valores reais em Git, `.env`, logs, shell compartilhado ou documentação. Use variáveis compartilhadas da Railway para evitar divergências entre API e jobs.
 
 Gere duas chaves diferentes:
 
@@ -139,16 +139,78 @@ DEFAULT_FROM_EMAIL=M&R BarberHub <nao-responda@mail.seudominio.com>
 
 Cadastre `RESEND_API_KEY` como secret diretamente no painel Railway. Defina `FRONTEND_URL=https://app.seudominio.com` para os links de recuperação e mantenha `PASSWORD_RESET_TIMEOUT=3600` para expiração em uma hora. Nunca coloque a chave Resend no frontend ou no repositório.
 
+Antes do primeiro envio, verifique no Resend o domínio/subdomínio de envio e o endereço em `DEFAULT_FROM_EMAIL`; aguarde estado verificado. A chave deve ser restrita ao envio necessário. E-mails de cobrança são informativos e idempotentes: nunca inclua número de cartão, dados de pagamento, corpo de webhook, IDs do provedor, tokens ou chaves.
+
+## 5.1. Assinaturas Asaas e checkout hospedado
+
+### Configuração de ambiente
+
+Configure Asaas Sandbox primeiro. Cadastre uma API key de Sandbox restrita e estes valores como segredos Railway, nunca no frontend:
+
+```text
+ASAAS_API_URL=https://api-sandbox.asaas.com/v3
+ASAAS_CHECKOUT_BASE_URL=https://sandbox.asaas.com/checkoutSession/show
+ASAAS_CHECKOUT_ALLOWED_ORIGINS=https://sandbox.asaas.com
+ASAAS_PROVIDER_TIMEZONE=America/Sao_Paulo
+ASAAS_API_KEY=defina-no-painel-railway
+ASAAS_WEBHOOK_TOKEN=gere-token-forte-independente
+ASAAS_CHECKOUT_EXPIRES_MINUTES=60
+BILLING_PUBLIC_PLAN_CODE=barberhub
+FRONTEND_URL=https://app.seudominio.com
+```
+
+Para Asaas produção, troque somente URLs e API key pelos valores de produção; mantenha o mesmo contrato e HTTPS:
+
+```text
+ASAAS_API_URL=https://api.asaas.com/v3
+ASAAS_CHECKOUT_BASE_URL=https://www.asaas.com/checkoutSession/show
+ASAAS_CHECKOUT_ALLOWED_ORIGINS=https://asaas.com,https://www.asaas.com
+ASAAS_PROVIDER_TIMEZONE=America/Sao_Paulo
+ASAAS_API_KEY=defina-no-painel-railway
+ASAAS_WEBHOOK_TOKEN=gere-outro-token-forte-independente
+ASAAS_CHECKOUT_EXPIRES_MINUTES=60
+BILLING_PUBLIC_PLAN_CODE=barberhub
+FRONTEND_URL=https://app.seudominio.com
+```
+
+Produção aceita somente `https://api.asaas.com/v3`, origens HTTPS oficiais exatas do Asaas, expiração de checkout entre 10 e 1440 minutos e tokens fortes. Gere `ASAAS_WEBHOOK_TOKEN` de forma independente de `ASAAS_API_KEY`, por exemplo `openssl rand -hex 32`. Cadastre-o no webhook Asaas e no secret Railway; não reutilize token de API, JWT ou chave Django. O endpoint é exatamente `POST https://api.mrbarberhub.com.br/api/v1/billing/webhooks/asaas/`; o Asaas envia token no cabeçalho `asaas-access-token`.
+
+Depois que o evento é persistido no PostgreSQL, o webhook retorna exatamente `200`, inclusive se o broker estiver indisponível; a recuperação periódica o despacha novamente. Falha de armazenamento antes da aceitação pode retornar erro. Isso evita reentrega agressiva do provedor sem perder o trabalho durável.
+
+`BILLING_PUBLIC_PLAN_CODE` identifica o plano público exato e ativo que `GET /api/v1/billing/plans/current/` e `POST /api/v1/billing/signup/` resolvem no servidor; o navegador não seleciona plano, preço, trial ou estado interno. O cadastro retorna `checkout_url` e `external_reference`. Browser usa somente `checkout_url` para redirect ao checkout hospedado; não use nem exponha `external_reference` no fluxo de navegação. Checkout tem recorrência mensal, cartão tratado pelo Asaas e expira após `ASAAS_CHECKOUT_EXPIRES_MINUTES` (default `60`). Backend, anexo operacional, API e frontend aceitam somente HTTPS em origens Asaas exatas configuradas. Nem `checkout_url` nem `external_reference` prova pagamento. O navegador pode voltar para `/checkout/concluido`, `/checkout/cancelado` ou `/checkout/expirado`, mas callback ou redirect não confirma pagamento e nunca libera acesso. Somente webhook autenticado confirma transição.
+
+### Eventos habilitados e ciclo de acesso
+
+Cadastre apenas estes eventos, pois são os únicos tratados pelo código:
+
+- `CHECKOUT_PAID`: checkout inicial pago ativa `TRIAL`; checkout de regularização pago reativa assinatura restrita. O formato oficial pode omitir correlação suficiente; o servidor localiza somente pelo checkout de ID persistido, consulta esse checkout no Asaas e exige ID, estado, referência e uma única assinatura ativa compatíveis. Ausência, divergência ou ambiguidade falha fechada.
+- `CHECKOUT_CANCELED` e `CHECKOUT_EXPIRED`: somente o checkout atual inicial ou de regularização é limpo; evento antigo não altera tentativa nova. O administrador pode pedir novo link por e-mail, inclusive enquanto a assinatura está `PENDING_CHECKOUT`.
+- `PAYMENT_CONFIRMED` e `PAYMENT_RECEIVED`: confirmam pagamento e mantêm/reativam `ACTIVE`.
+- `PAYMENT_OVERDUE` e `PAYMENT_REPROVED_BY_RISK_ANALYSIS`: iniciam `GRACE` de 7 dias. Eventos duplicados para mesmo pagamento não estendem prazo.
+- `PAYMENT_CHARGEBACK_REQUESTED` e `PAYMENT_CHARGEBACK_DISPUTE`: suspendem imediatamente por chargeback.
+- `SUBSCRIPTION_INACTIVATED` e `SUBSCRIPTION_DELETED`: cancelam assinatura.
+
+No signup, aplicação copia `plan.trial_days` para `subscription.trial_days` e calcula/persiste `subscription.trial_ends_at` antes de criar checkout. Ao criar checkout, envia `subscription.next_billing_at` como `nextDueDate` ao Asaas na criação do checkout. `CHECKOUT_PAID` apenas ativa `TRIAL` usando datas armazenadas na assinatura; não relê `plan.trial_days`. Alterar qualquer `subscription` após signup é proibido e insuficiente para mudar prazo já enviado ao Asaas. O `dateCreated` local oficial (`YYYY-MM-DD HH:MM:SS`) é interpretado em `ASAAS_PROVIDER_TIMEZONE`; ISO com offset é preservado. Eventos antigos de outro ciclo não substituem estado atual.
+
+Trial público padrão é 30 dias. Uma oferta piloto exclusiva do servidor concede 60 dias quando escolhida antes do provisionamento: a operação confiável passa esse plano diretamente a `provision_signup`, que grava snapshot local e `nextDueDate` 60 antes de chamar o provedor. A oferta pode permanecer inativa para consulta pública. Nunca altere temporariamente o plano canônico de `BILLING_PUBLIC_PLAN_CODE`, nunca aceite `plan_code` do browser e nunca mude assinatura depois do checkout.
+
+Se checkout de 30 dias já existe, não edite somente banco: cancele e reemita via suporte ou fluxo operacional implementado, ou reinicie signup de teste limpo após cancelar checkout antigo. Eventos de webhook e e-mails de ciclo são idempotentes. O sweep horário envia ciclo e-mail-primeiro: avisos de trial em 7, 3 e 1 dia, cobrança não confirmada, suspensão, reativação e cancelamento. A deduplicação de suspensão usa o pagamento imutável de cada ciclo, portanto um novo ciclo pode gerar seu próprio aviso. Ao vencer `GRACE`, assinatura fica `SUSPENDED`; login não cria JWT nem altera `last_login`, mas logout continua disponível. O administrador bloqueado ou pendente pode pedir link de regularização por e-mail e concluir checkout hospedado.
+
+O pedido público de regularização sempre devolve a mesma resposta. Para administrador elegível conhecido, ele persiste uma solicitação antes do broker e a recupera a cada minuto, com no máximo cinco tentativas. E-mail desconhecido não é persistido. O destinatário conhecido fica em snapshot somente durante entrega e é expurgado em até 24 horas.
+
+Falhas ambíguas de criação de checkout de regularização entram em `CREATING` ou `RECONCILIATION_REQUIRED`; não há recuperação automática. Siga a [runbook de reconciliação](runbooks/billing-regularization-reconciliation.md): confirme checkout no Asaas e execute reconciliação manual fail-closed antes de criar outro checkout.
+
 ## 6. Vercel
 
 1. Importe o mesmo repositório GitHub.
 2. Defina **Root Directory** como `frontend`.
-3. O arquivo `vercel.json` já configura Vite, fallback de `/agendar/*`, cache e cabeçalhos de segurança.
+3. O arquivo `vercel.json` já configura Vite, fallback SPA para rotas diretas (incluindo cadastro, regularização e estados de checkout), cache e cabeçalhos de segurança.
 4. Cadastre em Production e Preview:
 
 ```text
 VITE_API_URL=https://api.mrbarberhub.com.br/api/v1
 VITE_TURNSTILE_SITE_KEY=...
+VITE_ASAAS_CHECKOUT_ORIGINS=https://asaas.com,https://www.asaas.com
 VITE_POSTHOG_KEY=...              # opcional
 VITE_POSTHOG_HOST=https://us.i.posthog.com
 ```
@@ -157,7 +219,9 @@ Cadastre também `VITE_MR_SOLUTIONS_WHATSAPP_URL` com a URL HTTPS pública `wa.m
 
 5. Vincule `app.seudominio.com`. Depois, atualize o widget Turnstile para aceitar somente esse hostname.
 
-O PostHog está configurado sem autocapture, gravação de sessão ou persistência em cookies/localStorage. Não envie nomes, telefones ou conteúdo de formulários como eventos.
+O PostHog está configurado sem autocapture, gravação de sessão ou persistência em cookies/localStorage. O token de `/regularizar` é removido da URL antes da inicialização de analytics, e essa rota desliga PostHog, cache, referrer e indexação. Não envie nomes, telefones ou conteúdo de formulários como eventos.
+
+Vercel recebe somente valores públicos `VITE_*`, incluindo `VITE_TURNSTILE_SITE_KEY`. Nunca cadastre `ASAAS_API_KEY`, `ASAAS_WEBHOOK_TOKEN`, `RESEND_API_KEY`, `DJANGO_SECRET_KEY`, `JWT_SIGNING_KEY` ou `DATABASE_URL` no ambiente frontend; esses segredos existem somente na Railway.
 
 ## 7. Primeiro administrador
 
@@ -185,6 +249,14 @@ Após o sucesso, remova imediatamente `INITIAL_ADMIN_PASSWORD` das variáveis Ra
 - Supabase possui backup habilitado e alertas de uso configurados.
 - Upstash, Railway, Vercel e PostHog possuem limites de gasto/alertas.
 - Cloudflare está em SSL/TLS **Full (strict)** e HTTPS obrigatório.
+- Asaas Sandbox: `GET /api/v1/billing/plans/current/` retorna plano; cadastro por `POST /api/v1/billing/signup/` abre somente checkout hospedado; callback do navegador não altera acesso.
+- Webhook Sandbox autenticado chega em `/api/v1/billing/webhooks/asaas/`; persistência retorna `200` mesmo com broker indisponível e a recuperação processa depois. `CHECKOUT_PAID` só ativa ao reconciliar o ID persistido com dados atuais do Asaas; duplicata não duplica transição/e-mail.
+- Simule `CHECKOUT_CANCELED` e `CHECKOUT_EXPIRED` no checkout atual inicial e de regularização; confirme limpeza segura, reemissão por e-mail e que evento antigo não limpa tentativa nova.
+- Piloto de 60 dias: use oferta separada de servidor antes de `provision_signup`, confirme snapshot/`nextDueDate` 60 e mantenha o plano público canônico em 30. Se checkout de 30 dias existe, cancele/reemita; não edite banco somente.
+- Simule `PAYMENT_OVERDUE`, confirme `GRACE` de 7 dias estável, depois regularize apenas por e-mail e webhook; simule chargeback, inativação e deleção em Sandbox.
+- Verifique domínio/remetente Resend e receba e-mail de ciclo sem cartão, payload ou referência do provedor.
+- Após smoke Sandbox, cancele/expire checkout de teste no painel Asaas, confirme que não há assinatura/pagamento ativo e remova usuário/tenant de teste apenas em ambiente não produtivo. Não apague dados de produção para limpeza.
+- Antes de liberar produção, execute gates: `cd backend && pytest`; `cd backend && ruff check .`; `cd backend && python manage.py makemigrations --check --dry-run`; `cd frontend && npm run test:config`; `cd frontend && VITE_API_URL=<API HTTPS> VITE_TURNSTILE_SITE_KEY=<site-key-publica> VITE_ASAAS_CHECKOUT_ORIGINS=https://asaas.com,https://www.asaas.com VITE_MR_SOLUTIONS_WHATSAPP_URL=<URL HTTPS wa.me aprovada> npm run build`; `cd frontend && npm run lint`; `cd frontend && CHOKIDAR_USEPOLLING=true npm run test:e2e`.
 
 ## 8.1. Smoke test de desempenho antes da demonstração
 

@@ -1,5 +1,7 @@
 from rest_framework import generics, viewsets
 from rest_framework.permissions import AllowAny
+from apps.barbershops.models import Barbershop
+from apps.billing.access import barbershops_with_access
 from core.utils.viewsets import TenantViewSetMixin
 from .models import Service
 from .serializers import ServiceSerializer
@@ -18,4 +20,7 @@ class PublicServiceListView(generics.ListAPIView):
     pagination_class = None
 
     def get_queryset(self):
-        return Service.objects.filter(barbershop__slug=self.kwargs["slug"], barbershop__active=True, active=True)
+        barbershops = barbershops_with_access(
+            Barbershop.objects.filter(slug=self.kwargs["slug"], active=True)
+        )
+        return Service.objects.filter(barbershop__in=barbershops, active=True)

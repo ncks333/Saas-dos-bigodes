@@ -82,6 +82,16 @@ const loginErrorText = (error: unknown) => {
   }
   return errorText(error);
 };
+const subscriptionRequired = (error: unknown) => {
+  if (!axios.isAxiosError(error)) return false;
+  const containsCode = (value: unknown): boolean => {
+    if (!value || typeof value !== "object") return false;
+    if (Array.isArray(value)) return value.some(containsCode);
+    const record = value as Record<string, unknown>;
+    return record.code === "subscription_required" || Object.values(record).some(containsCode);
+  };
+  return error.response?.status === 403 && containsCode(error.response.data);
+};
 
 function Button({children, variant = "primary", ...props}: React.ButtonHTMLAttributes<HTMLButtonElement> & {variant?: "primary" | "secondary" | "danger" | "ghost"}) {
   return <button {...props} className={`btn btn-${variant} ${props.className ?? ""}`}>{children}</button>;
@@ -116,7 +126,8 @@ function LoginPage({onLogin}: {onLogin: (user: SessionUser) => void}) {
     localStorage.setItem("access", data.access); localStorage.setItem("refresh", data.refresh);
     localStorage.setItem("user", JSON.stringify(data.user)); onLogin(data.user);
   }});
-  return <main className="login-shell"><section className="login-copy"><AppBrandMark/><p className="eyebrow">M&amp;R BarberHub</p><h1>Sua barbearia organizada.<br/><span>Seu tempo de volta.</span></h1><p>Agenda, clientes, equipe e serviços em um painel simples de usar.</p><p className="company-credit">Um produto <strong>M&amp;R Solutions</strong></p></section><section className="login-card"><a className="back-link" href="/">Voltar ao site</a><h2>Bem-vindo</h2><p>Entre para administrar sua barbearia.</p><form onSubmit={e => {e.preventDefault(); login.mutate();}}><label>Usuário<input autoComplete="username" autoFocus value={username} onChange={e => setUsername(e.target.value)}/></label><label>Senha<input autoComplete="current-password" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Sua senha"/></label><a className="forgot-link" href="/recuperar-senha">Esqueci minha senha</a>{login.error && <p className="form-error">{loginErrorText(login.error)}</p>}<Button disabled={!username || password.length < 8 || login.isPending}>{login.isPending ? "Entrando..." : "Entrar"}</Button></form><p className="company-credit login-credit">Tecnologia por <strong>M&amp;R Solutions</strong></p></section></main>;
+  const blocked = subscriptionRequired(login.error);
+  return <main className="login-shell"><section className="login-copy"><AppBrandMark/><p className="eyebrow">M&amp;R BarberHub</p><h1>Sua barbearia organizada.<br/><span>Seu tempo de volta.</span></h1><p>Agenda, clientes, equipe e serviços em um painel simples de usar.</p><p className="company-credit">Um produto <strong>M&amp;R Solutions</strong></p></section><section className="login-card"><a className="back-link" href="/">Voltar ao site</a><h2>Bem-vindo</h2><p>Entre para administrar sua barbearia.</p><form onSubmit={e => {e.preventDefault(); login.mutate();}}><label>Usuário<input autoComplete="username" autoFocus value={username} onChange={e => setUsername(e.target.value)}/></label><label>Senha<input autoComplete="current-password" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Sua senha"/></label><a className="forgot-link" href="/recuperar-senha">Esqueci minha senha</a>{login.error && <p className="form-error">{loginErrorText(login.error)}</p>}{blocked && <a className="regularization-link" href="/regularizar">Regularizar assinatura</a>}<Button disabled={!username || password.length < 8 || login.isPending}>{login.isPending ? "Entrando..." : "Entrar"}</Button></form><p className="company-credit login-credit">Tecnologia por <strong>M&amp;R Solutions</strong></p></section></main>;
 }
 
 const navItems: {page: PageName; label: string; icon: typeof CalendarDays; admin?: boolean}[] = [
@@ -235,7 +246,7 @@ function SettingsPage() {
 function SearchBox({value,setValue,placeholder}:{value:string;setValue:(v:string)=>void;placeholder:string}) {return <div className="search-box"><Search/><input value={value} onChange={e=>setValue(e.target.value)} placeholder={placeholder}/></div>}
 function Toggle({checked,setChecked,children}:{checked:boolean;setChecked:(v:boolean)=>void;children:ReactNode}) {return <label className="toggle"><input type="checkbox" checked={checked} onChange={e=>setChecked(e.target.checked)}/><span/>{children}</label>}
 
-declare global {interface Window {turnstile?: {render:(element:HTMLElement,options:{sitekey:string;callback:(token:string)=>void})=>string}}}
+declare global {interface Window {turnstile?: {render:(element:HTMLElement,options:{sitekey:string;callback:(token:string)=>void;"error-callback"?:()=>void;"expired-callback"?:()=>void})=>string}}}
 function PublicBooking({slug}:{slug:string}) {
   usePageMetadata("Agendamento online | M&R BarberHub", "Escolha serviço, data e horário para solicitar seu atendimento.", `/agendar/${slug}`);
   const [service,setService]=useState(""); const [day,setDay]=useState(format(new Date(),"yyyy-MM-dd")); const [slot,setSlot]=useState(""); const [name,setName]=useState(""); const [whatsapp,setWhatsapp]=useState(""); const [privacyAccepted,setPrivacyAccepted]=useState(false); const [captcha,setCaptcha]=useState(import.meta.env.VITE_TURNSTILE_SITE_KEY ? "" : "development"); const captchaRef=useRef<HTMLDivElement>(null);

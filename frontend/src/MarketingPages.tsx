@@ -1,3 +1,4 @@
+import {useQuery} from "@tanstack/react-query";
 import {type CSSProperties, useEffect, useState} from "react";
 import {
   ArrowRight,
@@ -13,6 +14,8 @@ import {
   Workflow,
 } from "lucide-react";
 import Globe from "@/components/ui/globe";
+import type {Plan} from "./BillingPages";
+import api from "./api";
 import {usePageMetadata} from "./metadata";
 import "./marketing.css";
 
@@ -62,6 +65,8 @@ const shootingStars = [
 ];
 
 const mrWhatsappUrl = import.meta.env.VITE_MR_SOLUTIONS_WHATSAPP_URL;
+const money = (amount: string, currency: string) => Number(amount).toLocaleString("pt-BR", {style: "currency", currency});
+const useLandingPlan = () => useQuery({queryKey: ["current-plan"], queryFn: () => api.get<Plan>("/billing/plans/current/").then(response => response.data)});
 
 function Brand() {
   return <a className="marketing-brand" href="/" aria-label="M&R BarberHub — início"><BrandMark/><strong><span>M&amp;R</span> Barber<span>Hub</span></strong></a>;
@@ -212,6 +217,9 @@ export function MRSolutionsPage() {
 
 export function LandingPage() {
   usePageMetadata("M&R BarberHub | Gestão para barbearias", "Agenda, clientes, equipe e serviços em um painel feito para a rotina da barbearia.", "/");
+  const plan = useLandingPlan();
+  const currentPlan = plan.data;
+  const trialLabel = currentPlan ? `${currentPlan.trial_days} dias grátis` : "teste grátis";
   return <main className="marketing-shell">
     <header className="marketing-nav">
       <Brand/>
@@ -224,7 +232,7 @@ export function LandingPage() {
         <p className="marketing-kicker"><span/> Feito para a rotina da barbearia</p>
         <h1>Menos conversa perdida.<br/><em>Mais cadeira ocupada.</em></h1>
         <p className="hero-lead">Centralize agenda, clientes, equipe e serviços. Seu cliente marca pelo celular; você acompanha tudo em um painel direto.</p>
-        <div className="hero-actions"><a className="marketing-primary" href="/agendar/bigodes">Ver agendamento <ArrowRight/></a><a className="marketing-secondary" href="/login">Acessar painel</a></div>
+        <div className="hero-actions"><a className="marketing-primary" href="/cadastro">Começar {trialLabel} <ArrowRight/></a><a className="marketing-secondary" href="/login">Já sou cliente</a></div>
         <ul className="hero-checks"><li><CheckCircle2/> Sem conflito de horários</li><li><CheckCircle2/> Funciona no celular</li><li><CheckCircle2/> Dados separados por barbearia</li></ul>
       </div>
 
@@ -236,13 +244,18 @@ export function LandingPage() {
       </div>
     </section>
 
+    <section className="landing-pricing" aria-labelledby="pricing-title">
+      <div><p className="marketing-kicker">Plano direto para sua rotina</p><h2 id="pricing-title">Agenda, clientes e equipe no mesmo lugar.</h2><p>Comece sem cobrança hoje. Valor e período grátis vêm do plano publicado pelo servidor.</p></div>
+      <div className="landing-price-card">{plan.isLoading ? <p role="status">Carregando plano...</p> : plan.isError || !currentPlan ? <p role="alert">Plano indisponível. Atualize a página e tente novamente.</p> : <><span>{currentPlan.name}</span><strong>{money(currentPlan.amount, currentPlan.currency)}</strong><small>por mês, depois de {currentPlan.trial_days} dias grátis</small><a className="marketing-primary" href="/cadastro">Começar {currentPlan.trial_days} dias grátis <ArrowRight/></a></>}</div>
+    </section>
+
     <section className="marketing-section" id="recursos">
       <div className="section-heading centered"><p className="marketing-kicker">Tudo que sua barbearia precisa em um só lugar</p></div>
       <div className="benefit-grid">{benefits.map(({icon:Icon,title,text})=><article key={title}><Icon/><h3>{title}</h3><p>{text}</p></article>)}</div>
     </section>
 
     <section className="system-section" id="sistema">
-      <div className="system-copy"><p className="marketing-kicker">Sistema em uso</p><h2>Interface simples para agenda, clientes e serviços.</h2><p>O painel reúne a rotina da barbearia em telas diretas: visão geral, atendimentos, cadastro de clientes, serviços e horários de funcionamento.</p><a className="marketing-primary" href="/login">Acessar painel <ArrowRight/></a></div>
+      <div className="system-copy"><p className="marketing-kicker">Sistema em uso</p><h2>Interface simples para agenda, clientes e serviços.</h2><p>O painel reúne a rotina da barbearia em telas diretas: visão geral, atendimentos, cadastro de clientes, serviços e horários de funcionamento.</p><a className="marketing-primary" href="/cadastro">Começar {trialLabel} <ArrowRight/></a></div>
       <div className="device-showcase" aria-label="Dashboard em notebook e celular">
         <div className="laptop-frame">
           <div className="dashboard-screen">
@@ -267,10 +280,10 @@ export function LandingPage() {
 
     <section className="booking-section" id="agendamento">
       <div><p className="marketing-kicker">Agendamento público</p><h2>Cliente escolhe serviço, data e horário pelo celular.</h2><p>O fluxo público já existe em <strong>/agendar/bigodes</strong> e envia a reserva para a agenda do painel.</p></div>
-      <a className="marketing-primary" href="/agendar/bigodes">Ver agendamento <ArrowRight/></a>
+      <a className="marketing-primary" href="/cadastro">Começar {trialLabel} <ArrowRight/></a>
     </section>
 
-    <section className="marketing-cta"><div><h2>Abra o BarberHub e acompanhe a rotina.</h2><p>Use o painel para gerenciar agenda, clientes, serviços e configurações da barbearia.</p></div><a className="marketing-primary" href="/login">Acessar painel <ArrowRight/></a></section>
+    <section className="marketing-cta"><div><h2>Abra o BarberHub e acompanhe a rotina.</h2><p>Use o painel para gerenciar agenda, clientes, serviços e configurações da barbearia.</p></div><a className="marketing-primary" href="/cadastro">Começar {trialLabel} <ArrowRight/></a></section>
 
     <footer className="marketing-footer"><Brand/><p>Produto da <a href="/mr-solutions">M&amp;R Solutions</a>.</p><div><a href="/privacidade">Privacidade</a><a href="/login">Painel</a></div></footer>
   </main>;
