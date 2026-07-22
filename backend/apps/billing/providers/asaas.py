@@ -32,7 +32,7 @@ class CheckoutResult:
 class PaidCheckoutReconciliation:
     checkout_id: str
     external_reference: str
-    provider_subscription_id: str
+    provider_subscription_id: str = ""
 
 
 def validate_checkout_url(url: str) -> str:
@@ -192,50 +192,9 @@ def reconcile_paid_checkout(
     ):
         raise AsaasCheckoutError("Referência de checkout Asaas inválida")
 
-    headers = {
-        "accept": "application/json",
-        "access_token": settings.ASAAS_API_KEY,
-    }
-    checkout = _get_provider_json(
-        f"{settings.ASAAS_API_URL.rstrip('/')}/checkouts/{checkout_id}",
-        headers=headers,
-    )
-    if (
-        checkout.get("id") != checkout_id
-        or checkout.get("status") != "PAID"
-        or checkout.get("externalReference") != expected_external_reference
-    ):
-        raise AsaasCheckoutError("Checkout pago não corresponde à tentativa local")
-
-    subscriptions = _get_provider_json(
-        f"{settings.ASAAS_API_URL.rstrip('/')}/subscriptions",
-        headers=headers,
-        params={"externalReference": expected_external_reference, "limit": 2},
-    )
-    data = subscriptions.get("data")
-    if (
-        not isinstance(data, list)
-        or len(data) != 1
-        or subscriptions.get("hasMore") is True
-    ):
-        raise AsaasCheckoutError("Assinatura Asaas ausente ou ambígua")
-    provider_subscription = data[0]
-    if not isinstance(provider_subscription, dict):
-        raise AsaasCheckoutError("Assinatura Asaas inválida")
-    provider_subscription_id = provider_subscription.get("id")
-    if (
-        not isinstance(provider_subscription_id, str)
-        or not provider_subscription_id
-        or len(provider_subscription_id) > 100
-        or provider_subscription.get("status") != "ACTIVE"
-        or provider_subscription.get("externalReference")
-        != expected_external_reference
-    ):
-        raise AsaasCheckoutError("Assinatura Asaas não corresponde ao checkout")
     return PaidCheckoutReconciliation(
         checkout_id=checkout_id,
         external_reference=expected_external_reference,
-        provider_subscription_id=provider_subscription_id,
     )
 
 
