@@ -376,4 +376,3 @@ def test_paid_checkout_reconciliation_relies_on_authenticated_paid_webhook_data(
     assert result.checkout_id == "chk_paid"
     assert result.external_reference == external_reference
     assert result.provider_subscription_id == ""
-

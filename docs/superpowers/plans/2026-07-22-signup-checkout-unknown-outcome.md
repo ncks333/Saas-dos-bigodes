@@ -93,4 +93,3 @@ Expected: PASS.
 git add backend/apps/billing/models.py backend/apps/billing/migrations/0010_subscription_signup_checkout_state.py backend/apps/billing/services.py backend/tests/test_onboarding.py
 git commit -m "fix: preserve unknown signup checkouts for reconciliation"
 ```
-
