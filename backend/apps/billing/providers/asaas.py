@@ -80,11 +80,6 @@ def _create_checkout(
                 "value": float(subscription.plan.amount),
             }
         ],
-        "customerData": {
-            "name": user.get_full_name() or user.username,
-            "email": user.email,
-            "phone": subscription.barbershop.whatsapp,
-        },
         "subscription": {
             "cycle": "MONTHLY",
             "nextDueDate": next_due_date.date().isoformat(),

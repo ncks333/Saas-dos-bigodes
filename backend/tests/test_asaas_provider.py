@@ -77,11 +77,6 @@ def test_checkout_uses_server_plan_and_credit_card(monkeypatch, subscription, us
                     "value": 79.9,
                 }
             ],
-            "customerData": {
-                "name": user.username,
-                "email": user.email,
-                "phone": subscription.barbershop.whatsapp,
-            },
             "subscription": {
                 "cycle": "MONTHLY",
                 "nextDueDate": subscription.next_billing_at.date().isoformat(),
