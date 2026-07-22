@@ -631,7 +631,7 @@ def provision_signup(data, plan, *, request=None):
                     "updated_at",
                 ]
             )
-    except Exception:
+    except Exception as local_error:
         try:
             cancel_checkout(checkout.id)
         except Exception:
@@ -642,9 +642,9 @@ def provision_signup(data, plan, *, request=None):
                     Subscription.SignupCheckoutState.RECONCILIATION_REQUIRED
                 ),
             )
-            raise
+            raise local_error
         barbershop.delete()
-        raise
+        raise local_error
     return subscription, checkout
 
 

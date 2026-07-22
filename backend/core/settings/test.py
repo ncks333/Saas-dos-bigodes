@@ -4,6 +4,7 @@ DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memor
 PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 CELERY_TASK_ALWAYS_EAGER = True
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+DEFAULT_FROM_EMAIL = "nao-responda@bigodes.local"
 CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
 ASAAS_API_URL = "https://api-sandbox.asaas.com/v3"
 ASAAS_CHECKOUT_BASE_URL = "https://sandbox.asaas.com/checkoutSession/show"
