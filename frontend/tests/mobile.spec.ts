@@ -139,10 +139,11 @@ test("painel abre a navegação móvel sem estourar a tela", async ({page}) => {
       : url.includes("daily_summary")
       ? {total: 0, confirmed: 0, pending: 0, awaiting: 0, cancelled: 0, completed: 0, no_show: 0, revenue: 0}
       : url.includes("/appointments/") ? []
-      : {daily_revenue: 0, monthly_revenue: 0, cancellation_rate: 0, popular_hours: []};
+      : {daily_revenue: 0, monthly_revenue: 0, cancellation_rate: 0, popular_hours: [], subscription_status: "TRIAL", trial_ends_at: new Date(Date.now() + 2 * 86_400_000).toISOString()};
     await route.fulfill({json});
   });
   await page.goto("/login");
+  await expect(page.getByText(/Teste grátis: faltam \d+ dias/)).toBeVisible();
   await expect(page.locator(".sidebar-brand img").first()).toHaveAttribute("src", "/barberhub-icon-v2.png");
   await page.locator(".mobile-menu").click();
   await expect(page.locator(".sidebar.open")).toBeVisible();
