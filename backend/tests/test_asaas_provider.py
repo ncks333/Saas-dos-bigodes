@@ -277,8 +277,10 @@ def test_checkout_rejects_non_allowlisted_provider_link(
         lambda *_args, **_kwargs: UnsafeResponse(),
     )
 
-    with pytest.raises(AsaasCheckoutOutcomeUnknownError):
+    with pytest.raises(AsaasCheckoutOutcomeUnknownError) as exc_info:
         create_recurring_checkout(subscription, user)
+
+    assert exc_info.value.checkout_id == "chk_unsafe"
 
 
 @override_settings(**ASAAS_SETTINGS)

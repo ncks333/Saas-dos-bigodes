@@ -593,7 +593,22 @@ def provision_signup(data, plan, *, request=None):
         )
     try:
         checkout = create_recurring_checkout(subscription, user)
-    except AsaasCheckoutOutcomeUnknownError:
+    except AsaasCheckoutOutcomeUnknownError as exc:
+        checkout_id = exc.checkout_id
+        if checkout_id:
+            try:
+                cancel_checkout(checkout_id)
+            except Exception:
+                logger.warning("Checkout compensation failed after unsafe Asaas URL")
+                Subscription.objects.filter(pk=subscription.pk).update(
+                    provider_checkout_id=checkout_id,
+                    signup_checkout_state=(
+                        Subscription.SignupCheckoutState.RECONCILIATION_REQUIRED
+                    ),
+                )
+                raise
+            barbershop.delete()
+            raise
         Subscription.objects.filter(pk=subscription.pk).update(
             signup_checkout_state=(
                 Subscription.SignupCheckoutState.RECONCILIATION_REQUIRED
@@ -621,6 +636,13 @@ def provision_signup(data, plan, *, request=None):
             cancel_checkout(checkout.id)
         except Exception:
             logger.warning("Checkout compensation failed after local signup error")
+            Subscription.objects.filter(pk=subscription.pk).update(
+                provider_checkout_id=checkout.id,
+                signup_checkout_state=(
+                    Subscription.SignupCheckoutState.RECONCILIATION_REQUIRED
+                ),
+            )
+            raise
         barbershop.delete()
         raise
     return subscription, checkout

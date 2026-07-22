@@ -241,6 +241,29 @@ def test_signup_unknown_checkout_outcome_persists_reconciliation_record(
 
 
 @pytest.mark.django_db
+def test_signup_cancels_known_checkout_when_provider_rejects_unsafe_url(
+    plan, monkeypatch
+):
+    canceled_checkouts = []
+    monkeypatch.setattr(
+        "apps.billing.services.create_recurring_checkout",
+        lambda *_args: (_ for _ in ()).throw(
+            AsaasCheckoutOutcomeUnknownError("unsafe URL", checkout_id="chk_unsafe")
+        ),
+    )
+    monkeypatch.setattr(
+        "apps.billing.services.cancel_checkout",
+        lambda checkout_id: canceled_checkouts.append(checkout_id),
+    )
+
+    with pytest.raises(AsaasCheckoutOutcomeUnknownError, match="unsafe URL"):
+        provision_signup(signup_payload(), plan)
+
+    assert canceled_checkouts == ["chk_unsafe"]
+    assert Subscription.objects.count() == 0
+
+
+@pytest.mark.django_db
 def test_provider_failure_returns_503_and_rolls_back_local_tenant(
     client, plan, monkeypatch
 ):
@@ -353,3 +376,38 @@ def test_local_failure_after_checkout_cancels_remote_checkout_and_rolls_back_ten
     assert Subscription.objects.count() == 0
     assert OperatingHour.objects.count() == 0
     assert AuditEvent.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_signup_keeps_reconciliation_record_when_checkout_cancellation_fails(
+    client, plan, monkeypatch
+):
+    original_save = Subscription.save
+    monkeypatch.setattr("apps.billing.views.verify_turnstile", lambda *_args: True)
+    monkeypatch.setattr(
+        "apps.billing.services.create_recurring_checkout",
+        lambda *_args: CheckoutResult(
+            id="chk_uncanceled",
+            url="https://sandbox.asaas.com/checkoutSession/show/chk_uncanceled",
+        ),
+    )
+    monkeypatch.setattr(
+        "apps.billing.services.cancel_checkout",
+        lambda *_args: (_ for _ in ()).throw(AsaasCheckoutError("cancel failed")),
+    )
+
+    def fail_provider_checkout_save(self, *args, **kwargs):
+        if "provider_checkout_id" in kwargs.get("update_fields", []):
+            raise DatabaseError("local persistence failed")
+        return original_save(self, *args, **kwargs)
+
+    monkeypatch.setattr(Subscription, "save", fail_provider_checkout_save)
+
+    with pytest.raises(DatabaseError, match="local persistence failed"):
+        client.post(
+            "/api/v1/billing/signup/", signup_payload(), content_type="application/json"
+        )
+
+    subscription = Subscription.objects.get(barbershop__slug="barbearia-joao")
+    assert subscription.provider_checkout_id == "chk_uncanceled"
+    assert subscription.signup_checkout_state == "RECONCILIATION_REQUIRED"

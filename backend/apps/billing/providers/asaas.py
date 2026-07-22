@@ -17,6 +17,10 @@ class AsaasCheckoutNotCreatedError(AsaasCheckoutError):
 class AsaasCheckoutOutcomeUnknownError(AsaasCheckoutError):
     """Asaas may have created checkout, but caller cannot verify outcome."""
 
+    def __init__(self, message, *, checkout_id=""):
+        super().__init__(message)
+        self.checkout_id = checkout_id
+
 
 @dataclass(frozen=True)
 class CheckoutResult:
@@ -127,9 +131,14 @@ def _create_checkout(
         raise AsaasCheckoutOutcomeUnknownError(
             "Resultado da criação de checkout Asaas é desconhecido"
         )
-    url = validate_checkout_url(
-        link or f"{settings.ASAAS_CHECKOUT_BASE_URL}?id={checkout_id}"
-    )
+    try:
+        url = validate_checkout_url(
+            link or f"{settings.ASAAS_CHECKOUT_BASE_URL}?id={checkout_id}"
+        )
+    except AsaasCheckoutOutcomeUnknownError as exc:
+        raise AsaasCheckoutOutcomeUnknownError(
+            str(exc), checkout_id=checkout_id
+        ) from None
     return CheckoutResult(id=checkout_id, url=url)
 
 
