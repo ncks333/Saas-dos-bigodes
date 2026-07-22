@@ -283,6 +283,32 @@ def test_checkout_rejects_non_allowlisted_provider_link(
     assert exc_info.value.checkout_id == "chk_unsafe"
 
 
+@pytest.mark.django_db
+@override_settings(**ASAAS_SETTINGS)
+def test_checkout_retains_id_when_provider_link_has_invalid_type(
+    monkeypatch, subscription, user
+):
+    subscription.next_billing_at = timezone.now() + timedelta(days=30)
+    subscription.save(update_fields=["next_billing_at", "updated_at"])
+
+    class InvalidLinkResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"id": "chk_invalid_link", "link": 1}
+
+    monkeypatch.setattr(
+        "apps.billing.providers.asaas.requests.post",
+        lambda *_args, **_kwargs: InvalidLinkResponse(),
+    )
+
+    with pytest.raises(AsaasCheckoutOutcomeUnknownError) as exc_info:
+        create_recurring_checkout(subscription, user)
+
+    assert exc_info.value.checkout_id == "chk_invalid_link"
+
+
 @override_settings(**ASAAS_SETTINGS)
 def test_checkout_url_validator_accepts_exact_configured_sandbox_origin():
     assert asaas.validate_checkout_url(

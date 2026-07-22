@@ -129,7 +129,8 @@ def _create_checkout(
     link = data.get("link")
     if link is not None and not isinstance(link, str):
         raise AsaasCheckoutOutcomeUnknownError(
-            "Resultado da criação de checkout Asaas é desconhecido"
+            "Resultado da criação de checkout Asaas é desconhecido",
+            checkout_id=checkout_id,
         )
     try:
         url = validate_checkout_url(
